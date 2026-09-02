@@ -1,0 +1,242 @@
+---
+title: "Self-refinement and Search"
+subtitle: "Critique, revision, branching, and verifier-guided selection"
+---
+
+## Chapter orientation
+
+### Why this chapter matters
+
+Inference-time scaling can sample independent candidates. Self-refinement and search use computation across dependent steps: a model proposes a solution, evaluates or critiques it, revises it, or expands several partial solutions before selecting one. These procedures can correct a detectable error, but they can also repeat the same unsupported claim in more polished language.
+
+The relevant question is whether each step adds information, tests a constraint, or changes a candidate set under a declared rule. This chapter distinguishes revision loops from search, explains verifier-guided branching, and records the failure trace needed to assess them. Chapter 39 turns to reinforcement learning for reasoning trajectories.
+
+### Learning objectives
+
+By the end of this chapter, you should be able to:
+
+- distinguish drafting, critique, revision, search, and verification;
+- implement a bounded critique-and-revision loop;
+- represent a search tree with nodes, scores, and expansion rules;
+- explain why a self-critique may repeat a shared model error;
+- identify stopping and pruning rules as part of the system; and
+- evaluate whether refinement improved correctness rather than style alone.
+
+### Running loop
+
+The running system produces a draft, applies a check, and either accepts or revises within a fixed budget. A checkable failure is needed for the loop to know what to change.
+
+```{python}
+#| label: fig-refinement-loop
+#| fig-cap: "A bounded self-refinement loop drafts a candidate, applies a critique or verifier, revises only when a declared condition fails, and records the stopping reason."
+#| fig-alt: "A cycle connects draft, critique or verifier, revision, and acceptance, with a maximum-step budget."
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle, FancyArrowPatch
+plt.style.use("seaborn-v0_8-whitegrid")
+blue,teal,orange,purple,grey="#24527a","#3a9188","#d97745","#7655a6","#5f6b76"
+fig,ax=plt.subplots(figsize=(9,3.6)); ax.axis("off")
+for x,label,c in [(.3,"draft",blue),(2.2,"critique or\nverifier",orange),(4.3,"revise",teal),(6.3,"accept or\nstop",purple)]: ax.add_patch(Rectangle((x,1.35),1.4,.6,facecolor=c,edgecolor="white")); ax.text(x+.7,1.65,label,ha="center",va="center",color="white",fontsize=9)
+for x in [1.73,3.73,5.73]: ax.add_patch(FancyArrowPatch((x,1.65),(x+.42,1.65),arrowstyle="-|>",color=grey,mutation_scale=11))
+ax.add_patch(FancyArrowPatch((5.0,1.3),(2.9,.8),connectionstyle="arc3,rad=.3",arrowstyle="-|>",color=teal,mutation_scale=11)); ax.text(4.1,.55,"repeat only while budget remains and a failure is identified",ha="center",color=grey,fontsize=8); ax.set_xlim(0,8); ax.set_ylim(.2,2.6); plt.show()
+```
+
+::: {.concept-box .concept-core #concept-self-refinement data-term="Self-refinement and search" data-domain="Reasoning models"}
+**Self-refinement and search.** A procedure that critiques, revises, branches, or selects candidate trajectories. Its results depend on the critique source, revision rule, frontier policy, verifier, and stopping condition.
+:::
+
+## Level 1 - Intuition
+
+### Revision is useful when it can target an error
+
+A revision loop can improve a calculation when a verifier identifies an incorrect result, a compiler reports an error, or retrieved evidence contradicts a draft claim. A generic prompt to “check your work” can help on some tasks, but it gives the same model an opportunity to restate its initial error. The critique must be evaluated as a signal, not assumed to be independent evidence.
+
+```{python}
+draft={"answer":13,"check":"expected 12","passes":False}
+revised={"answer":12,"check":"expected 12","passes":True}
+print(draft); print(revised)
+```
+
+### A critique is useful only when it changes the available evidence
+
+A critique can identify a failed test, a violated constraint, a missing source, an inconsistent intermediate result, or a mismatch between a response and the requested format. Each signal has a different provenance. A compiler error or exact arithmetic check supplies an external condition; retrieved evidence can contradict a factual claim; a self-critique is another model completion conditioned on the same draft and prompt. Treating these signals as equivalent obscures why one revision may correct an error while another only changes its wording.
+
+The revision prompt should state the signal and the permitted action. If a verifier reports an invalid equation, the system can recompute the equation. If retrieval supplies a conflicting source, it can compare claims against the source and record the citation boundary. If the critic only says that an answer is unclear, the system may improve presentation without changing task correctness. Self-refinement methods demonstrate how generated feedback can be used to revise outputs, but the resulting gain must still be tested against an independent task measure [@madaan2023selfrefine].
+
+Refinement differs from search. A single revision follows one trajectory. Search retains several candidates or partial states and allocates further work among them. It can recover from an early bad branch when the expansion and selection rules preserve alternatives. It also consumes more state, tokens, and verifier calls.
+
+Branching is warranted when a task has materially different partial solutions and early commitment creates a known risk: alternative decompositions of a proof, several query plans, competing retrieval paths, or different tool arguments. It is not warranted merely because a response can be rewritten many ways. For stylistic or single-answer tasks, retaining branches may add cost without adding independent evidence. The system should state why an alternative is being preserved and what later check could distinguish it from the other branches.
+
+```{python}
+#| label: fig-revision-search
+#| fig-cap: "Revision follows one candidate through successive changes, while search retains several partial candidates before selecting or pruning them."
+#| fig-alt: "A linear revision path is shown beside a branching search tree with two retained leaves."
+fig,axes=plt.subplots(1,2,figsize=(9,3.5))
+axes[0].axis("off"); axes[0].set_title("revision")
+for i in range(3): axes[0].add_patch(Rectangle((.15+i*.28,.4),.2,.22,facecolor=[blue,orange,teal][i],edgecolor="white")); axes[0].text(.25+i*.28,.51,f"v{i}",ha="center",va="center",color="white",fontsize=8)
+axes[1].axis("off"); axes[1].set_title("search")
+for x,y,c in [(.1,.5,blue),(.4,.75,teal),(.4,.25,orange),(.72,.75,purple),(.72,.25,teal)]: axes[1].add_patch(plt.Circle((x,y),.07,color=c));
+plt.tight_layout(); plt.show()
+```
+
+## Level 2 - Mechanics
+
+### A revision state needs an invariant
+
+Each revision should retain the task, constraints, evidence, and the previous candidate rather than silently rewriting the problem. An invariant is a property that must remain true across steps: an answer may need to address the same question, preserve quoted source material, stay within a word limit, or satisfy a tool's input schema. Without such a record, a loop can appear to improve by dropping a difficult requirement or by replacing the original task with an easier one.
+
+Revision also needs a change criterion. A loop can accept a candidate only when a declared verifier passes, a score improves by a stated margin, or a newly available source resolves a prior gap. Repeating a near-identical candidate should count as a stalled step, not as independent progress. Store the difference between candidate versions and the signal that authorised the change. This makes it possible to identify loops that consume a budget while cycling around the same error.
+
+### A loop needs a stopping rule
+
+Stop when a verifier accepts, a maximum number of revisions is reached, a score fails to improve, a time budget expires, or no valid action remains. Each rule has a failure mode. Stopping on self-reported confidence can preserve an error; stopping only on a verifier can loop when the verifier is incomplete; unlimited revision can increase latency without adding information.
+
+A stop reason should be an output of the procedure, not an after-the-fact explanation. Distinguish accepted solutions from exhausted budgets, repeated states, unavailable tools, parser failures, and empty frontiers. These conditions require different treatment in deployment: an accepted answer may be returned, while an exhausted or unverifiable trajectory may need an abstention, a fallback, or a request for more information.
+
+```{python}
+answer=13
+for step in range(3):
+    if answer==12: break
+    answer=12 if step==0 else answer
+print("answer",answer,"steps used",step+1)
+```
+
+```{python}
+#| label: fig-stopping-rules
+#| fig-cap: "A refinement system can stop on verifier acceptance, a step limit, no score improvement, or a time budget; each rule changes failure risk."
+#| fig-alt: "A decision diagram lists four possible stopping conditions for a refinement loop."
+fig,ax=plt.subplots(figsize=(7,3.2)); ax.axis("off")
+for i,(label,c) in enumerate([("verifier accepts",teal),("maximum steps",orange),("no improvement",purple),("time budget",blue)]): ax.add_patch(Rectangle((.35+(i%2)*3.35,2.2-(i//2)*1.0),2.7,.48,facecolor=c,edgecolor="white")); ax.text(1.7+(i%2)*3.35,2.44-(i//2)*1.0,label,ha="center",va="center",color="white")
+plt.tight_layout(); plt.show()
+```
+
+### Search requires node and score semantics
+
+A search node can contain a partial solution, accumulated cost, verifier state, and a score used for expansion or pruning. A score may represent probability, a learned value, a constraint count, or an exact check. These are not interchangeable. A high language-model probability can favour fluent partial text while an exact verifier favours a narrow feasible state.
+
+```{python}
+frontier=[{"state":"2+2=", "score":.6},{"state":"2+3=", "score":.5}]
+expanded=[{"state":"2+2=4","score":.95},{"state":"2+3=5","score":.94}]
+print(max(expanded,key=lambda node:node["score"]))
+```
+
+### Search allocates a finite expansion budget
+
+Search needs a policy for choosing which frontier node to expand next. Breadth-first expansion spreads work across shallow alternatives; depth-first expansion follows one path before returning; a beam keeps the best-scoring fixed number of nodes; best-first expansion prioritises the current score. These policies have different coverage and memory profiles. They should be named in the system record rather than described loosely as exploration.
+
+The expansion action also needs semantics. A node may add one calculation step, retrieve one document, call one tool, propose one subgoal, or append a token block. The cost and meaning of a depth limit depend on this action. Tree-of-Thoughts makes branching prompts explicit, but a branching prompt alone does not establish a useful search procedure without a score, retention rule, and evaluation of the paths it discards [@yao2023tree].
+
+## Level 3 - Search and failure propagation
+
+### Pruning can discard the correct path
+
+Beam width, score threshold, depth limit, and branching factor determine which partial states survive. Narrow pruning reduces cost but can remove a low-scoring path that would later become correct. Broad search retains alternatives but can make a weak verifier or heuristic dominate the total cost. Evaluation should report candidate coverage at each depth and where correct paths were discarded.
+
+```{python}
+#| label: fig-pruning
+#| fig-cap: "A search policy prunes partial candidates under a width or score budget; pruning reduces cost but can remove a path that would later be correct."
+#| fig-alt: "A branching tree has one low-scoring branch crossed out at an early depth and a retained branch reaching an accepted leaf."
+fig,ax=plt.subplots(figsize=(8,3.8)); ax.axis("off")
+for x,y,label,c in [(1,1.9,"root",blue),(3,2.7,"high",teal),(3,1.1,"low",orange),(5,2.7,"leaf",purple)]: ax.add_patch(plt.Circle((x,y),.22,color=c)); ax.text(x,y,label,ha="center",va="center",color="white",fontsize=8)
+ax.plot([1.2,2.8],[2,2.6],color=grey); ax.plot([1.2,2.8],[1.8,1.2],color=grey); ax.plot([3.2,4.8],[2.7,2.7],color=grey); ax.text(3.5,.55,"crossed branch: pruned before later evidence",color=orange); ax.set_xlim(0,6); ax.set_ylim(.2,3.4); plt.show()
+```
+
+### Scores must be comparable across the nodes they rank
+
+A score can rank candidates only if the compared nodes represent the same decision stage or if the score accounts for their different states and costs. Comparing a short partial derivation with a complete answer using a raw language-model probability can favour brevity. Comparing nodes evaluated with different retrieved evidence can favour the node that received an easier source. A value estimate may guide expansion, but it is not proof that a node is correct.
+
+Record when a score was produced, what inputs and tools were available, and whether it was used for pruning, ordering, or final selection. Test whether correct continuations were systematically assigned lower scores before they were pruned. This diagnostic distinguishes a search limit imposed by the budget from a selection failure imposed by the scoring rule.
+
+### Critique can propagate an early framing error
+
+If a draft assumes a false premise, a critic generated from the same context may assess internal consistency rather than external validity. Adding retrieval, tools, independent candidate generators, or exact constraints can provide a different signal, but each also has coverage limits. The trace should identify which information was available at each revision, not only the final revised prose.
+
+```{python}
+trace=[{"step":0,"draft":"unsupported claim","signal":"self-critique"},{"step":1,"draft":"rephrased unsupported claim","signal":"self-critique"}]
+for row in trace: print(row)
+```
+
+### Verification can occur before, during, or after search
+
+An early verifier can reject an infeasible partial state before the system spends resources extending it. A later verifier may have more context and be able to check a complete result, but it leaves more weak branches alive. Some tasks need both: cheap checks for syntax or known constraints during expansion and a stronger final check for the selected answer. The checks should be logged separately because their coverage and errors differ.
+
+Verification can also distort the search when it rewards a proxy. A format checker may cause the system to optimise well-formed output while leaving the substantive task unsolved. A learned critic can rank familiar styles of explanation above an unusual but valid path. Compare a verifier-guided procedure with a matched procedure that exposes the verifier's acceptances and rejections; otherwise an apparent search gain may be a change in answer formatting or evaluation rather than a gain in task solution.
+
+## Level 4 - Audit and evaluation
+
+### Compare refinement with matched baselines
+
+Compare a one-pass answer, a one-pass answer plus verifier, a fixed-budget refinement loop, and a search procedure under the same task and model. Report outcome correctness, accepted-candidate rate, revision count, candidates expanded and pruned, tokens, tool calls, latency, and failure types. A more fluent final response is not evidence of improved reasoning unless the task criterion improves.
+
+```{python}
+systems={"one-pass":(.55,180),"revise":(.61,520),"search":(.68,1100)}
+for name,(accuracy,tokens) in systems.items(): print(name,accuracy,tokens)
+```
+
+```{python}
+#| label: fig-search-budget
+#| fig-cap: "Revision and search can improve a task outcome while consuming different token budgets; a deployment comparison must retain both axes."
+#| fig-alt: "A scatter plot places one-pass, revision, and search systems at increasing token cost and illustrative accuracy."
+fig,ax=plt.subplots(figsize=(6.8,3.8)); ax.scatter([180,520,1100],[.55,.61,.68],s=95,color=[blue,teal,purple]);
+for x,y,label in zip([180,520,1100],[.55,.61,.68],["one-pass","revision","search"]): ax.text(x,y+.012,label,ha="center")
+ax.set_xlabel("tokens"); ax.set_ylabel("accuracy"); ax.set_ylim(.5,.72); ax.set_title("Illustrative refinement and search trade-off"); plt.tight_layout(); plt.show()
+```
+
+### Evaluate trajectories as well as final answers
+
+Final-answer accuracy cannot show whether a revision fixed an error, a search retained a useful alternative, or a verifier happened to accept a lucky candidate. For each item, classify the initial candidate, each critique or check, each revision or expansion, each pruning event, and the final selection. A trajectory can then show a generation failure, a false critique, an unnecessary revision, premature pruning, verifier false acceptance, or budget exhaustion.
+
+Counterfactual comparisons make these categories useful. Run the same initial candidates with and without a critique, vary the beam width while holding the score fixed, or replace a learned verifier with an exact check where the task permits. The objective is not to attribute every successful answer to one token or step. It is to establish which component changes the measured task outcome under the declared budget.
+
+### The audit record must retain the trajectory
+
+Store prompt, model and template, initial draft, critiques or verifier outputs, revision prompts, node states, expansion and pruning rules, stop reason, selected output, evaluation result, and resource use. This record makes a repeated failure identifiable: a wrong candidate may have been generated, a correct candidate may have been pruned, or a verifier may have accepted an error.
+
+The record should preserve failures even when the final answer is correct. A correct answer reached after repeated invalid tool calls, unstable critiques, or an exhausted branch budget has different deployment implications from a direct verified solution. Report trajectory length and resource distributions, not only the best final path. The next chapter changes the policy through reinforcement learning; it will require the same distinction between an observed trajectory and the signal used to reward it.
+
+```{python}
+record={"max_depth":3,"beam_width":2,"verifier":"exact-v1","stop":"accepted","tokens":840,"selected_node":"n7"}
+assert {"beam_width","verifier","stop","tokens"} <= set(record)
+print("search audit record complete")
+```
+
+## Common misconceptions
+
+- **Revision automatically corrects an answer.** It needs a signal that identifies an error or supplies new evidence.
+- **A critique is independent verification.** It can share the generator's assumptions and errors.
+- **Search is just a longer chain of thought.** It retains, expands, and prunes alternative states under explicit rules.
+- **Pruning only removes bad candidates.** A heuristic can discard a path that would later be correct.
+- **More iterations always help.** Loops can plateau or amplify a mistaken premise.
+
+## Exercises
+
+1. Distinguish critique, revision, verification, and search.
+2. Implement a bounded revision loop with an exact stopping condition.
+3. Define node state for a two-step search problem.
+4. Compare beam-width two and four under a fixed cost budget.
+5. Construct a self-critique failure that preserves a false premise.
+6. Log a trace that identifies a pruned correct candidate.
+7. Design a verifier-guided revision experiment.
+8. State two stopping rules and their failure modes.
+9. Explain why a fluent revision may not improve task accuracy.
+10. List fields required for a search audit record.
+11. Compare a tool-based check with a model-generated critique.
+12. Propose a task where branching search is warranted.
+13. Define an evaluation of pruning quality.
+14. Separate revision cost from candidate-generation cost.
+15. State why search gains require matched baselines.
+16. Identify the next chapter's reinforcement-learning focus.
+
+## Summary
+
+Self-refinement and search allocate inference-time computation across dependent steps. Revision can correct a detected error; search can preserve alternatives when early choices are uncertain. Both require explicit signals, budgets, stopping rules, and trajectory traces. Their value is established by task outcomes and cost, not by the apparent sophistication of revised prose.
+
+[Chapter 39](39-reinforcement-learning-for-reasoning.qmd) introduces rewards, trajectories, and policy updates for training reasoning behaviour rather than only allocating more inference-time computation.
+
+## Looking ahead
+
+Refinement and search alter inference-time computation around a fixed policy. [Chapter 39](39-reinforcement-learning-for-reasoning.qmd) turns to changing that policy through rewards assigned to sampled trajectories.
+
+## Further reading
+
+Self-refinement is studied by @madaan2023selfrefine. Tree-of-Thoughts provides a prompting framework for deliberate search [@yao2023tree].

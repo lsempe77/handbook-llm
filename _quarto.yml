@@ -1,0 +1,84 @@
+project:
+  type: book
+  output-dir: _book
+
+bibliography: refs.bib
+biblio-style: apalike
+
+book:
+  title: "Machine Learning Concepts"
+  subtitle: "A four-level handbook from intuition to research and systems"
+  author: "Lucas Sempé"
+  date: today
+  chapters:
+    - index.qmd
+    - 01-what-is-machine-learning.qmd
+    - 02-models-predictions-loss.qmd
+    - 03-gradient-descent.qmd
+    - 04-backpropagation.qmd
+    - 05-artificial-neuron.qmd
+    - 06-neural-network-layers.qmd
+    - 07-activation-functions.qmd
+    - 08-small-neural-network.qmd
+    - 09-generalisation-overfitting.qmd
+    - 10-regularisation.qmd
+    - 11-initialisation-gradient-flow.qmd
+    - 12-normalisation.qmd
+    - 13-optimisers-learning-rate-schedules.qmd
+    - 14-training-loops-batches-checkpoints.qmd
+    - 15-efficient-training-systems.qmd
+    - 16-vectors-tensors-representations.qmd
+    - 17-embeddings.qmd
+    - 18-sequence-modelling-before-transformers.qmd
+    - 19-attention.qmd
+    - 20-self-attention-multi-head.qmd
+    - 21-positional-information.qmd
+    - 22-transformer-block.qmd
+    - 23-encoder-decoder-models.qmd
+    - 24-tokens-tokenisation.qmd
+    - 25-next-token-prediction.qmd
+    - 26-pretraining-data-objectives-scale.qmd
+    - 27-context-windows-model-inference.qmd
+    - 28-decoding-generation.qmd
+    - 29-instruction-tuning.qmd
+    - 30-preference-optimisation.qmd
+    - 31-full-and-parameter-efficient-fine-tuning.qmd
+    - 32-quantisation-efficient-inference.qmd
+    - 33-retrieval-augmented-generation.qmd
+    - 34-evaluating-llms.qmd
+    - 35-what-makes-a-reasoning-model.qmd
+    - 36-evaluating-reasoning.qmd
+    - 37-inference-time-scaling.qmd
+    - 38-self-refinement-and-search.qmd
+    - 39-reinforcement-learning-for-reasoning.qmd
+    - 40-grpo-and-related-training-methods.qmd
+    - 41-distillation-and-efficient-reasoning.qmd
+    - 42-limits-and-open-questions.qmd
+    - 43-mixture-of-experts-models.qmd
+    - 44-vision-transformers.qmd
+    - 45-diffusion-models.qmd
+    - 46-multimodal-models.qmd
+    - 47-scaling-laws-and-compute.qmd
+    - 48-serving-deployment-monitoring.qmd
+    - 49-safety-security-responsible-use.qmd
+  appendices:
+    - appendix-concepts.qmd
+
+format:
+  html:
+    theme: cosmo
+    css: styles.css
+    toc: true
+    number-sections: false
+    code-fold: true
+    code-tools: true
+  pdf:
+    documentclass: scrreprt
+  epub: default
+
+execute:
+  freeze: auto
+  warning: false
+  error: false
+
+jupyter: python3

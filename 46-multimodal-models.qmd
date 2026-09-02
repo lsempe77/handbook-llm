@@ -1,0 +1,251 @@
+---
+title: "Multimodal Models"
+subtitle: "Representation alignment, fusion, generation, and cross-modal evaluation"
+---
+
+## Chapter orientation
+
+Multimodal models connect representations from images, text, audio, video, or other inputs. The connection can be a shared embedding space, cross-attention between modality-specific encoders, or a generative model conditioned on another modality. The relevant question is not whether two modalities appear in one interface, but what data, objective, and fusion mechanism make one representation usable by another.
+
+::: {.concept-box .concept-core #concept-multimodal-model data-term="Multimodal model" data-domain="Modern AI systems"}
+**Multimodal model.** A system that represents, aligns, or generates across more than one data modality. Its claims depend on modality encoders, alignment data, fusion route, interface, and evaluation population.
+:::
+
+## Level 1 - Aligning representations
+
+An image encoder and a text encoder can map their inputs to vectors that should be close for matched image-text pairs and less similar for mismatched pairs. This contrastive interface supports retrieval and zero-shot classification, but it does not by itself establish grounded visual explanation or reliable generation. CLIP is a prominent example of paired image-text contrastive pretraining [@radford2021clip].
+
+```{python}
+#| label: fig-multimodal-alignment
+#| fig-cap: "Contrastive alignment brings matched image and text representations closer than mismatched pairs in a shared embedding space."
+#| fig-alt: "Image and text encoders project matched pairs near one another in a shared two-dimensional representation space."
+import numpy as np
+import matplotlib.pyplot as plt
+plt.style.use("seaborn-v0_8-whitegrid")
+fig,ax=plt.subplots(figsize=(6,4));ax.scatter([1,4,2.1,5],[1,3,1.2,3.2],c=["#24527a","#24527a","#d97745","#d97745"],s=90);ax.text(1,1.2,"image A");ax.text(2.1,1.4,"text A");ax.text(4,3.2,"image B");ax.text(5,3.4,"text B");ax.set_title("Illustrative aligned pairs");plt.show()
+```
+
+## Level 2 - Encoders and fusion
+
+### Shared space and cross-attention answer different questions
+
+A shared space compares whole inputs or regions through similarity. Cross-attention lets tokens from one modality query representations from another. A text token can therefore attend to image patches while a decoder generates a response. Early fusion combines modalities before many layers; late fusion combines separately processed summaries. These alternatives change what information is available at each stage and what failures can be inspected.
+
+```{python}
+#| label: fig-fusion-choices
+#| fig-cap: "Multimodal systems can align separate encoders in a shared space or allow one modality's tokens to retrieve from another through cross-attention."
+#| fig-alt: "Two diagrams contrast separate image and text encoders feeding similarity with text tokens attending to image tokens."
+from matplotlib.patches import Rectangle
+fig,ax=plt.subplots(figsize=(8,3));ax.axis("off")
+for x,l,c in [(.4,"image\nencoder","#24527a"),(2.1,"text\nencoder","#d97745"),(4,"shared\nspace","#7655a6"),(6.1,"cross-\nattention","#3a9188")]:ax.add_patch(Rectangle((x,1),1.2,.55,facecolor=c,edgecolor="white"));ax.text(x+.6,1.28,l,ha="center",va="center",color="white",fontsize=9)
+ax.set_xlim(0,8);ax.set_ylim(.5,2);plt.show()
+```
+
+```{python}
+image=np.array([.8,.1]); text=np.array([.7,.2]); print("similarity",image@text/(np.linalg.norm(image)*np.linalg.norm(text)))
+```
+
+## Level 3 - Generation and supervision
+
+Image captioning, visual question answering, and text-to-image generation require more than aligned pairs. A generative decoder receives a condition and produces tokens or a denoising direction. Training data determine which visual relations, languages, and answer formats are represented. Preserve modality encoders, preprocessing, prompt template, fusion locations, decoding or sampling policy, and loss masks in the training record.
+
+Paired data also contain their own errors. A caption can omit an object, describe a photographer's convention, or be copied from surrounding web text rather than visual evidence. A contrastive objective can reward agreement with these labels without distinguishing a grounded relation from a frequent association. Dataset construction should record pairing source, deduplication, language coverage, caption policy, rights, and the treatment of uncertain or conflicting labels.
+
+Contrastive supervision is usually built from a batch of paired examples. For image \(i\), its accompanying text is treated as a positive match and the other texts in the batch as negatives; the same comparison can be made from text to images. The loss increases similarity for the stated pair relative to alternatives. This is useful because it permits learning without a class label for every image, but it makes batch composition part of the objective. Repeated captions, near-duplicate images, mislabeled pairs, and systematically missing descriptions change which distinctions the representation can learn.
+
+```{python}
+# A toy image-to-text contrastive probability for one positive pair among a batch.
+similarities=np.array([3.1,1.2,.4,-.3])
+probabilities=np.exp(similarities)/np.exp(similarities).sum()
+print("probability assigned to the matched text:",round(probabilities[0],3))
+```
+
+Cross-attention introduces a different training and inference path. A query token from a decoder or text stream receives scores against image-patch keys, converts the scores to weights, and forms a weighted value combination. If a visual question asks about a particular region, that mechanism makes region information available to the text decoder. It does not require the decoder to use the relevant patches, and high weights do not establish that changing those patches would change the answer. A grounded claim needs an intervention: alter or mask the purported evidence while holding the question and other visible content fixed, then measure the answer change.
+
+### Fusion location determines what can be shared
+
+Early fusion permits image and text tokens to interact in many layers. It can model fine cross-modal relations, but requires the joint sequence and therefore increases memory and training cost. Late fusion keeps modality encoders largely separate and combines summaries near the output. It can be efficient for retrieval, while limiting token-level visual-language interaction. Connector modules provide a third option: they compress image features into a smaller set of tokens before a language decoder consumes them.
+
+The design should be matched to the task. Whole-image retrieval may require a global embedding. Counting, reading, spatial reference, and visual question answering need a route that retains relevant local information. State where fusion occurs, how many visual tokens reach the decoder, whether image encoders are frozen, and how image resolution or cropping affects that interface.
+
+```{python}
+architectures={"late fusion":{"visual_tokens_to_decoder":0,"use":"retrieval"},"cross attention":{"visual_tokens_to_decoder":196,"use":"grounded generation"},"connector":{"visual_tokens_to_decoder":32,"use":"compressed multimodal decoding"}}
+for name,record in architectures.items(): print(name,record)
+```
+
+### Grounded generation needs a claim-level audit
+
+A grounded caption or answer makes several possible claims: object presence, attribute, count, location, relation, text in the image, or an inference about an unseen event. Score these separately. An answer can be correct about a broad category and wrong about the relation that a user actually asked about. Evaluation should include negative questions, ambiguous images, image-text mismatches, and cases in which the appropriate response is uncertainty.
+
+Human review also needs a reference protocol. Reviewers require the source image at adequate resolution, a question, permitted answer options or rubric, and a way to record uncertainty. Agreement is evidence about the review procedure, not proof that the system is grounded. Compare model and reviewer errors by claim type before using a single aggregate score.
+
+For generation, condition adherence is not one quantity. An output may preserve broad scene category while missing count, spatial relation, negation, or named entity. Build evaluation sets that isolate these claims and distinguish an encoder failure, fusion failure, and decoder failure where possible.
+
+```{python}
+#| label: fig-conditioned-generation
+#| fig-cap: "A generative multimodal system encodes a condition, fuses it with decoder state, and generates a text or image output under a declared decoding policy."
+#| fig-alt: "Image and text condition inputs feed encoders and fusion before a generative decoder produces an output."
+fig,ax=plt.subplots(figsize=(7,3));ax.axis("off")
+for x,l,c in [(.3,"image","#24527a"),(1.8,"text","#d97745"),(3.5,"fusion","#7655a6"),(5.3,"decoder","#3a9188"),(6.7,"output","#24527a")]:ax.add_patch(Rectangle((x,1),1,.5,facecolor=c,edgecolor="white"));ax.text(x+.5,1.25,l,ha="center",va="center",color="white",fontsize=9)
+ax.set_xlim(0,8);ax.set_ylim(.5,2);plt.show()
+```
+
+### Evaluation conditions must follow the intended action
+
+Evaluate each link in the chain: image retrieval, text retrieval, condition adherence, factual grounding, output quality, and latency. A plausible answer can name objects absent from an image; a visually good generated image can fail a stated relation. Report source data, preprocessing, modality availability, language, image resolution, prompts, output policy, and slice results for rare or shifted combinations.
+
+Multimodal systems also need an abstention and escalation policy. If an image is unreadable, missing, outside the supported modality, or paired with an ambiguous question, the application should describe what it can and cannot infer. Returning a fluent answer in those conditions may conceal a missing input or a weak visual signal.
+
+Evaluation should be matched to the intended action. A retrieval system can be measured by whether a relevant paired item appears among the top results. A clinical or administrative image assistant requires a more demanding record: image acquisition conditions, intended and excluded uses, annotator and reference standard, error consequences, disagreement handling, and a human decision boundary. The model should not be credited with a capability because it answers a descriptive benchmark when the proposed deployment asks it to make a consequential judgement.
+
+### Modality encoders define what information reaches fusion
+
+An image encoder can produce one global vector, a grid of patch vectors, a hierarchy of visual features, or a compressed set of learned query tokens. An audio encoder can retain frames at different temporal resolutions. A text encoder can produce token states or one pooled representation. These choices determine the information that the fusion mechanism can access. A decoder cannot recover a small visual object if the encoder discarded it, and a global embedding may support retrieval while being inadequate for a question about the relative position of two objects.
+
+The encoder is therefore part of the task contract. Record the image resolution, crop and resize policy, colour space, normalisation values, patch or feature stride, number of visual tokens, and whether the encoder was pretrained, frozen, or updated during multimodal training. For audio or video, record sampling rate, frame rate, windowing, and any temporal pooling. A change in one of these choices can alter both accuracy and the population of inputs on which the system can make a claim.
+
+```{python}
+encoder_records={
+    "global retrieval":{"image_tokens":1,"resolution":224,"local_questions":"limited"},
+    "patch cross-attention":{"image_tokens":196,"resolution":224,"local_questions":"supported"},
+    "compressed connector":{"image_tokens":32,"resolution":336,"local_questions":"depends on compression"},
+}
+for design,record in encoder_records.items(): print(design,record)
+```
+
+### Alignment objectives create useful and misleading shortcuts
+
+Contrastive learning rewards a paired image and text description for being more similar than alternatives in a batch. This can produce representations that are useful for search, classification with text labels, or selecting candidate captions. It can also exploit correlations that are easier than the intended relation: a caption may be predicted from a watermark, a common background, a language convention, or repeated web template rather than from the object the evaluator expects the model to recognise.
+
+Evaluate these shortcuts through controlled counterexamples. Keep the target object fixed while changing background; keep the question fixed while replacing an irrelevant caption phrase; pair an image with a plausible but mismatched text; and compare examples from a new source or camera. A model that loses performance under a change that preserves the intended visual property may be relying on a shortcut. The result should be reported by comparison type, not hidden in an aggregate retrieval score.
+
+### Instruction tuning changes the output contract
+
+Many multimodal assistants are trained after alignment using demonstrations of questions, answers, tool calls, or dialogue. This stage teaches a response format and can make the model appear more helpful, but it also creates risks of unsupported confidence and answer-style imitation. The target mask must state which tokens are supervised, especially where a prompt includes image placeholders, tool output, or quoted source material. The data mixture should distinguish captioning, question answering, OCR, reasoning, refusal, and uncertainty examples.
+
+An instruction-following result needs tests for the response policy as well as visual accuracy. Ask whether the system abstains when the evidence is missing, cites the supplied image or source when required, follows an output schema, and avoids inventing measurements or text that are not visible. These are behavioural claims produced by the training interface, not automatic consequences of image-text alignment.
+
+### Multi-image and temporal inputs add binding problems
+
+An application may provide several images, a document with figures, or a video. The model then needs to identify which image supports which part of a question, preserve ordering, and avoid mixing evidence across inputs. A global pooled representation can make these bindings difficult to inspect. The input protocol should label image order, page, timestamp, and source, and the evaluation should include deliberately confusable examples in which only one input contains the answer.
+
+Temporal tasks need another distinction: a frame can show an object, while an action or change requires evidence across frames. Sampling a few frames may miss the decisive event. Record frame-selection policy and test changes in speed, camera movement, occlusion, and event duration. A model that performs on static representative frames has not established video understanding.
+
+```{python}
+multi_image_record={"images":["page-1","page-2"],"question":"Which panel contains the red marker?",
+                    "expected_evidence":"page-2 panel B","ordering":"preserved","answer_policy":"cite page and panel"}
+print(multi_image_record)
+```
+
+## Level 4 - Evaluation and limits
+
+### Output evaluation must retain uncertainty and source boundaries
+
+For visual question answering, compare an answer against evidence in the image and the reference answer. Mark whether disagreement comes from visual perception, ambiguous wording, an unsupported inference, or a reference-label problem. For retrieval, measure both whether a relevant item was found and whether irrelevant items were presented in positions where a user may rely on them. For image generation, measure condition adherence and unintended content separately. These tasks cannot be collapsed into a single general “multimodal score”.
+
+Where a system makes claims about documents, photographs, or people, distinguish description from inference. “The chart has a downward line” can be assessed from visible pixels. “The programme failed” introduces a causal or evaluative claim that may require information outside the image. Interface wording and evaluation rubrics should make that boundary visible. If the relevant source is absent, unreadable, or inconsistent, the appropriate output may be uncertainty or a request for another input.
+
+### Privacy, consent, and access controls are multimodal design choices
+
+Images, audio, and video can contain faces, locations, documents, identifiers, and incidental third parties. A multimodal deployment needs rules for collection, storage, access, retention, redaction, and deletion that match those input types. Storing derived embeddings does not necessarily remove the need for a privacy assessment; embeddings can preserve information useful for linkage or retrieval. A user should know what material is sent to the model and whether it will be retained for training, debugging, or review.
+
+Access controls also need to apply to evidence sources. A retrieval assistant should not expose an image or document merely because a user can ask about its topic. Bind the retrieval permission to the account and context before the representation reaches the model. Test cross-user, cross-tenant, and shared-device cases. These controls connect the chapter's representation mechanisms to the systems and safety material later in Part VI.
+
+### Dataset curation is part of the multimodal model
+
+Multimodal corpora are often assembled from heterogeneous sources. One collection may contain carefully written captions; another may use filenames, alt text, surrounding page text, or automatically generated descriptions. These sources have different reliability, language coverage, ownership, and association structure. A dataset card should distinguish them rather than report one aggregate number of pairs. It should also state how near-duplicates were detected across images and text, how train and evaluation sources were separated, and how broken links, corrupted files, or conflicting captions were handled.
+
+Filtering decisions require an explicit purpose. Removing material may reduce exposure to unwanted content, but it can also remove a language, cultural setting, or visual style from the data. Filtering faces or documents may protect privacy while weakening a task that legitimately requires authorised document understanding. Report the criterion, the affected share, the affected slices, and the unresolved risk. A data-cleaning claim without these fields says little about the distribution that reaches the model.
+
+Annotation is another source of uncertainty. Different reviewers can disagree about what is visible, whether a relation holds, whether text is readable, or whether a question is answerable from an image. Preserve the reference protocol and disagreement rather than collapsing all labels into one apparent truth. Where the deployment allows abstention, annotation should include unanswerable and ambiguous cases so that the model is not trained to answer every request confidently.
+
+### Routing and fallback should respect modality limits
+
+A multimodal application may decide whether to use a lightweight retrieval model, a more expensive cross-attention model, OCR, a document parser, a human reviewer, or no automated response. The routing signal can use file type, resolution, detected text, image count, confidence, or stated consequence. It should be evaluated as a policy: unnecessary escalation consumes resources, while missed escalation can leave a difficult request with an inadequate model.
+
+For low-quality images, a useful fallback may ask for a clearer scan or a different crop. For a document with complex tables, it may route to a layout-aware extraction tool. For a high-consequence image interpretation, it may provide a descriptive summary and require an authorised reviewer to make the decision. Each outcome should be distinguishable in logs and user-facing language. A generic answer from an unsupported modality can hide an information failure.
+
+```{python}
+routing_cases=[
+    {"input":"clear product image","route":"visual retrieval","reason":"global match sufficient"},
+    {"input":"blurred invoice","route":"request clearer scan","reason":"text evidence unavailable"},
+    {"input":"high-consequence document","route":"human review","reason":"decision boundary"},
+]
+for case in routing_cases: print(case)
+```
+
+### System comparisons need matched interfaces
+
+Comparing a multimodal model with a text-only baseline, a separate OCR pipeline, or a retrieval system requires a matched task interface. If one system receives a high-resolution original image and another receives a compressed crop, the result measures both model and input differences. If one system may call a tool or see multiple pages while another cannot, report that as part of the system comparison. A capability benchmark should identify whether answers can be derived from pixels alone, from external knowledge, or from the combination.
+
+Resource reporting is similarly specific. Measure encoder time, fusion or decoder time, visual-token count, image memory, request queue time, tool calls, and output-token cost. A connector that reduces visual tokens may reduce latency while losing small-object evidence. An end-to-end result should show that trade-off by task slice rather than infer it from the number of model parameters.
+
+### Open questions and bounded claims
+
+There remains no general test that proves a multimodal model's explanation is faithful to its image evidence. Attention weights, retrieved regions, and generated rationales can be useful diagnostic artefacts, but they require interventions and alternative explanations. There is also no single score for multimodal reliability across languages, camera types, document layouts, and consequences. These are empirical limitations of the evidence available for a deployment claim.
+
+A bounded claim might state that a specified model, given authorised 336-pixel images and a fixed prompt template, improves retrieval of matched product records on a held-out source at a stated latency. It should not become a claim that the model reliably understands every image, provides causal explanations, or can make an unreviewed decision in a different workflow. The terms of the claim identify what must be re-evaluated when data, modality, user population, or system interface changes.
+
+### Change control preserves the meaning of an evaluation
+
+Multimodal systems are particularly sensitive to component changes. Replacing an image encoder, changing a resize library, altering an OCR model, updating a text tokenizer, or changing the visual-token connector can change outputs even when the language decoder has not moved. Maintain a fixed regression set containing matched and mismatched pairs, low-quality inputs, multiple-image questions, authorised document examples, unanswerable prompts, and selected safety cases. Run it after any material change and record which component changed.
+
+The regression set should support both numerical and qualitative review. Numerical checks can test retrieval rank, schema validity, abstention rate, and latency. Expert review can inspect a small predeclared sample for relation, count, text, and uncertainty failures. Where a regression is found, determine whether the model, preprocessing, data access, routing, or interface caused it before changing the system. This preserves the evidence boundary established by the chapter rather than treating every visible error as an undifferentiated model failure.
+
+### Summary of the deployment record
+
+For every evaluated system version, retain the modality encoders, preprocessing, fusion architecture, token budget, training data and instruction mixture, routing policy, prompts, output policy, permission context, evaluation protocol, error slices, resource record, and change history. The record is necessarily longer than a model name because the same model behaves differently when these components change. It is the basis for comparing a multimodal system with another system or with a later version of itself.
+
+```{python}
+#| label: fig-crossmodal-error
+#| fig-cap: "Cross-modal evaluation separates retrieval, grounding, condition adherence, and generation errors rather than reporting one aggregate score."
+#| fig-alt: "A pipeline labels possible errors at image encoding, fusion, grounded response, and generated output stages."
+fig,ax=plt.subplots(figsize=(8,3));ax.axis("off")
+for i,(l,c) in enumerate([("encode","#24527a"),("fuse","#7655a6"),("ground","#d97745"),("generate","#3a9188")]):ax.add_patch(Rectangle((.4+i*1.8,1),1.2,.5,facecolor=c,edgecolor="white"));ax.text(1+i*1.8,1.25,l,ha="center",va="center",color="white")
+ax.set_xlim(0,8);ax.set_ylim(.5,2);plt.show()
+```
+
+```{python}
+#| label: fig-modality-slices
+#| fig-cap: "Performance should be reported by modality and cross-modal slice because missing, shifted, or low-quality inputs can change the system's behaviour."
+#| fig-alt: "A bar chart compares illustrative scores for standard pairs, low-resolution images, uncommon language, and missing-image inputs."
+fig,ax=plt.subplots(figsize=(6.5,3.6));ax.bar(["standard","low res","new language","missing image"],[.82,.66,.59,.31],color=["#24527a","#3a9188","#d97745","#7655a6"]);ax.set_ylim(0,1);ax.set_ylabel("illustrative score");plt.tight_layout();plt.show()
+```
+
+## Common misconceptions
+
+- **A shared embedding proves visual understanding.** It establishes similarity under a trained objective.
+- **Cross-attention guarantees grounding.** It provides an access path, not a verified attribution.
+- **A multimodal benchmark is one task.** Retrieval, grounding, and generation need distinct measures.
+- **Missing modalities are ordinary inputs.** The training and deployment policy must specify their handling.
+
+## Exercises
+
+1. Define a matched and mismatched image-text pair.
+2. Calculate cosine similarity for two supplied embeddings.
+3. Compare shared-space alignment with cross-attention fusion.
+4. Identify a preprocessing decision that changes image tokens.
+5. Design a grounding test for visual question answering.
+6. Define a text-to-image adherence measure.
+7. Specify a missing-image fallback policy.
+8. Propose a slice for an uncommon language-image pair.
+9. Explain why retrieval accuracy is insufficient for caption quality.
+10. State a data-provenance risk.
+11. Describe an intervention for a cross-attention claim.
+12. Compare early and late fusion.
+13. List a multimodal training-record field.
+14. Identify a condition that can be ignored by a generator.
+15. Design a latency record for two encoders.
+16. State the next chapter's scaling-law question.
+
+## Summary
+
+Multimodal systems require a stated representation interface, fusion mechanism, and training objective. Their claims should be evaluated separately for alignment, grounding, generation, and behaviour under changed modality conditions.
+
+## Looking ahead
+
+Once a system combines modalities, its training and evaluation costs depend on data, parameters, and computation in ways that cannot be read from architecture alone. [Chapter 47](47-scaling-laws-and-compute.qmd) examines the measured scaling relationships used to allocate those resources and the limits of extrapolating them.
+
+## Further reading
+
+Contrastive image-text pretraining is described by @radford2021clip.

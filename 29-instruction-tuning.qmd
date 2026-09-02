@@ -1,0 +1,264 @@
+---
+title: "Instruction Tuning"
+subtitle: "Supervised adaptation from continuation to instruction-following behaviour"
+---
+
+## Chapter orientation
+
+### Why this chapter matters
+
+A base language model predicts continuations of token sequences. It may complete an instruction, continue it, imitate an answer, or produce an unrelated pattern depending on the prompt and its pretraining distribution. Instruction tuning adapts the model on examples formatted as requests and preferred responses so that a defined interface more reliably produces the intended response style.
+
+The optimisation remains token prediction, but the training examples, target mask, conversation template, and evaluation task change. This chapter explains that change without claiming that supervised demonstrations establish factuality, safety, or preference alignment. Chapter 30 examines preference optimisation; Chapter 31 examines full and parameter-efficient task adaptation.
+
+### Learning objectives
+
+By the end of this chapter, you should be able to:
+
+- distinguish base pretraining from supervised instruction tuning;
+- define instruction, context, response, template, and target tokens;
+- explain why loss is normally applied to response tokens rather than the user's request;
+- identify data quality, diversity, and split risks in demonstration datasets;
+- implement a target mask for a toy chat example;
+- describe catastrophic forgetting and regression evaluation; and
+- specify the metadata needed to reproduce an instruction-tuning run.
+
+### Running conversation
+
+The running example has a system instruction, a user request, and an assistant response. The entire formatted conversation is input to a causal model, but only selected assistant tokens contribute to the supervised loss.
+
+```{python}
+#| label: fig-chat-template
+#| fig-cap: "Instruction tuning formats role-marked messages into one causal token sequence while applying loss only to the chosen assistant response."
+#| fig-alt: "A left-to-right sequence contains system, user, and assistant segments, with only the assistant segment highlighted as supervised targets."
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
+plt.style.use("seaborn-v0_8-whitegrid")
+blue,teal,orange,purple,grey="#24527a","#3a9188","#d97745","#7655a6","#5f6b76"
+parts=[("system",blue,False),("user request",teal,False),("assistant response",orange,True)]
+fig,ax=plt.subplots(figsize=(9,3)); ax.axis("off"); x=.35
+for label,c,target in parts:
+    w=2.55; ax.add_patch(Rectangle((x,1.25),w,.58,facecolor=c,edgecolor="white")); ax.text(x+w/2,1.54,label,ha="center",va="center",color="white")
+    ax.text(x+w/2,.87,"loss target" if target else "context only",ha="center",color=orange if target else grey,fontsize=9); x+=w+.25
+ax.text(4.6,.35,"Role markers and template tokens are part of the model input contract.",ha="center",color=grey); ax.set_xlim(0,9); ax.set_ylim(.1,2.2); plt.show()
+```
+
+::: {.concept-box .concept-core #concept-instruction-tuning data-term="Instruction tuning" data-domain="Large language models"}
+**Instruction tuning.** Supervised adaptation that trains a model to produce target responses within a declared conversation format. The target mask determines which tokens receive loss, while the template determines the interface supplied at training and use.
+:::
+
+::: {.concept-box .concept-distinction #concept-instruction-prompting data-term="Instruction tuning and prompting" data-domain="Large language models"}
+**Instruction tuning and prompting.** Instruction tuning changes a model through supervised parameter updates. Prompting changes the context supplied to a fixed model at inference time. Both can alter behaviour, but they make different resource and evidence claims.
+:::
+
+## Level 1 - Intuition
+
+### Demonstrations define a response convention
+
+An instruction-tuning dataset contains demonstrations of an input and a target response. They may include a system message, a user request, documents or tool outputs, and one or more assistant turns. During fine-tuning, the model sees the context and is trained to assign high probability to the demonstrated assistant tokens. Repeated examples establish a convention about when to answer, how to structure an answer, and how to handle specified formats.
+
+This does not convert a model into a database of verified answers. If demonstrations are wrong, incomplete, inconsistent, or narrowly distributed, the model can learn those patterns. A training run can improve compliance with a template while reducing performance on unrelated base-model behaviours. The desired change and the possible regression must both be evaluated.
+
+```{python}
+conversation=["<system>","Be concise.","<user>","Name a mammal.","<assistant>","A whale is a mammal."]
+print("\n".join(conversation))
+```
+
+### The template is not decoration
+
+Role markers tell the model which span is an instruction, which span is user-provided context, and where an assistant response should begin. A checkpoint trained with one template may respond poorly when served with another, even if the visible wording is unchanged. The tokenizer, special tokens, whitespace rules, and tool-call fields are all part of this interface.
+
+```{python}
+#| label: fig-template-mismatch
+#| fig-cap: "The same visible request can produce different token sequences under different role templates, so training and serving templates must be versioned together."
+#| fig-alt: "Two rows show alternative role-marked encodings of the same user request and assistant response."
+fig,axes=plt.subplots(2,1,figsize=(9,3.2))
+rows=[("template A",["<user>","request","<assistant>","response"]),("template B",["User:","request","Assistant:","response"])]
+for ax,(name,pieces) in zip(axes,rows):
+    ax.axis("off"); ax.text(.02,.5,name,weight="bold",color=grey,transform=ax.transAxes)
+    for i,p in enumerate(pieces):
+        c=teal if i<2 else orange; x=.2+i*.18; ax.add_patch(Rectangle((x,.23),.15,.54,facecolor=c,edgecolor="white")); ax.text(x+.075,.5,p,ha="center",va="center",color="white",fontsize=7)
+plt.tight_layout(); plt.show()
+```
+
+## Level 2 - Supervised mechanics
+
+### Context tokens and target tokens have different roles
+
+The user request must be visible so the model can condition on it. It is usually not a target to reproduce. A common loss mask sets labels for system, user, padding, and structural tokens to an ignore value, while keeping labels for assistant response tokens. The causal model still predicts a distribution at every position, but optimisation averages loss only over supervised positions.
+
+```{python}
+ids=np.array([2,10,11,3,20,21,4,30,31,32,5])
+assistant_start=7; pad_label=-100
+labels=np.full_like(ids,pad_label)
+labels[assistant_start:]=ids[assistant_start:]
+print("IDs:   ",ids)
+print("labels:",labels)
+```
+
+An off-by-one target mask can train the model to reproduce user text, omit the first assistant token, or include an end marker inconsistently. The model can still show a decreasing scalar loss, so small examples should print formatted tokens and labels before a large run.
+
+```{python}
+#| label: fig-target-mask
+#| fig-cap: "An instruction-tuning target mask excludes context and applies token loss only to the assistant answer span."
+#| fig-alt: "Aligned rows display token IDs and labels, with ignored labels before the assistant response and target IDs after it."
+fig,ax=plt.subplots(figsize=(9,3)); ax.axis("off")
+for row,(name,values) in enumerate([("token ID",ids),("label",labels)]):
+    ax.text(.05,1.8-row*.8,name,weight="bold",color=grey)
+    for i,v in enumerate(values):
+        x=1+i*.66; c=orange if row==1 and v!=pad_label else (blue if row==0 else grey)
+        ax.add_patch(Rectangle((x,1.53-row*.8),.52,.42,facecolor=c,edgecolor="white")); ax.text(x+.26,1.74-row*.8,str(v),ha="center",va="center",color="white",fontsize=7)
+ax.set_xlim(0,8.7); ax.set_ylim(.2,2.25); plt.show()
+```
+
+### Demonstration quality determines what is reinforced
+
+Instruction data may be written by people, collected from existing tasks, generated by another model, or revised through review. Each source can be useful, but each has distinct error and provenance risks. A dataset should record authorship or generation process, licensing and consent conditions, task categories, languages, response length, quality-control rules, and the version of any model used to synthesize examples.
+
+Data diversity is not a count of surface prompts. It concerns the distribution of tasks, ambiguity, formats, languages, safety-sensitive requests, and response behaviours. A dataset containing many paraphrases of one answer style can produce a narrow model interface. Evaluation splits should prevent template duplicates, source leakage, and near-identical instructions from inflating reported generalisation.
+
+```{python}
+examples={"extraction":1200,"summarisation":850,"coding":400,"multilingual":150}
+print("task counts:",examples)
+print("counts describe coverage only when task definitions and selection rules are documented")
+```
+
+## Level 3 - Adaptation and regression
+
+### Fine-tuning changes shared parameters
+
+Full supervised fine-tuning updates model parameters using gradients from the demonstration loss. The new gradients can improve target behaviours while changing probabilities needed for earlier behaviours. This is often called catastrophic forgetting when adaptation materially degrades retained capabilities. The term does not imply that any change is harmful: the question is whether a regression occurs on a predeclared retained-task set.
+
+```{python}
+before={"instruction":.42,"base_completion":.31,"code":.38}
+after={"instruction":.61,"base_completion":.27,"code":.33}
+for task in before: print(task,"change",round(after[task]-before[task],2))
+```
+
+The trade-off depends on data size and composition, learning rate, update count, sequence length, parameter scope, regularisation, and the mismatch between pretraining and adaptation tasks. A training report should retain intermediate checkpoints and evaluate both target and retained behaviours. A final checkpoint selected only on instruction loss can conceal a broader regression.
+
+### Multi-turn and tool examples create additional boundaries
+
+In a multi-turn conversation, later assistant targets can condition on earlier assistant text. A training pipeline must specify whether it applies loss to every assistant turn, how it masks user and tool spans, and whether it truncates from the beginning or end. Tool-call examples also require a schema and a decision about whether tool results are trusted context, target text, or both.
+
+```{python}
+roles=["system","user","assistant","tool","assistant"]
+supervise=np.array([False,False,True,False,True])
+print(list(zip(roles,supervise)))
+```
+
+### Dataset mixtures can create instruction conflicts
+
+Instruction datasets often combine short question-answer examples, summarisation, extraction, coding, safety responses, tool use, and multi-turn conversations. The same visible request can be paired with incompatible target styles across sources: one example may answer directly, another may ask a clarifying question, and a third may refuse. A model cannot infer an unstated hierarchy among such demonstrations. The dataset builder must define source weights, conflict rules, and the intended role of system messages or policy examples.
+
+This is also why response length and formatting deserve an audit. A corpus dominated by terse answers can make longer explanations less probable even when they are appropriate. A corpus dominated by verbose templates can produce unnecessary prefacing. These are not properties of “instruction following” in general; they are patterns in the supervised target distribution.
+
+```{python}
+#| label: fig-demonstration-mixture
+#| fig-cap: "Instruction-data mixtures allocate different proportions of supervised tokens to task types, response styles, and behavioural policies."
+#| fig-alt: "A stacked bar shows illustrative shares of extraction, explanation, coding, and policy demonstrations in an instruction-tuning mixture."
+types=["extraction","explanation","coding","policy"]
+shares=np.array([.25,.35,.2,.2])
+fig,ax=plt.subplots(figsize=(8,2.9)); left=0
+for name,share,c in zip(types,shares,[blue,teal,orange,purple]):
+    ax.barh([0],[share],left=[left],color=c,label=name); ax.text(left+share/2,0,f"{int(share*100)}%",ha="center",va="center",color="white"); left+=share
+ax.set_xlim(0,1); ax.set_yticks([]); ax.set_xlabel("illustrative supervised-token share"); ax.legend(ncol=4,loc="upper center"); ax.set_title("Mixture choices define the reinforced response distribution"); plt.tight_layout(); plt.show()
+```
+
+### Training loss is an incomplete selection criterion
+
+Response-token cross-entropy measures agreement with held-out demonstration continuations. It can identify overfitting to a declared validation set, but it cannot by itself show that an answer is helpful for a different user, factually supported, secure in a tool environment, or stable under prompt variation. Model selection should combine the validation loss with task-specific target and regression evaluations that were chosen before inspecting the final checkpoint.
+
+The evaluation must also preserve the serving interface. Comparing a base model under a raw completion prompt with a tuned model under a carefully engineered chat template mixes model adaptation and prompting. A fair comparison can report both interfaces, but it should label them separately and make visible any system messages, retrieval context, decoding constraints, or answer extraction rules.
+
+```{python}
+checkpoints={"step_100":(1.42,.52,.41),"step_500":(1.28,.61,.37),"step_900":(1.22,.60,.31)}
+for step,(loss,target,retained) in checkpoints.items():
+    print(step,"validation loss",loss,"target score",target,"retained score",retained)
+```
+
+### Errors often originate before the response span
+
+An incorrect instruction-tuned output can arise from an ambiguous request, an incompatible template, truncated context, unsupported content in the demonstration data, a target-mask error, decoding choices, or a model distribution that fails despite correct inputs. An audit should retain the formatted token sequence, role boundaries, masked labels, selected output IDs, and evaluation rationale for representative failures. This makes it possible to repair the relevant component rather than adding examples blindly.
+
+For a system that uses tools or retrieved documents, source availability should be part of the error record. An answer can be stylistically compliant while failing to use a supplied source, or it can cite a source that was never available in the context. Instruction tuning alone does not establish grounding behaviour; the task interface and evaluation need to test it.
+
+### The supervised objective has a length and balance policy
+
+Assistant-only masking is not sufficient to define a dataset loss. Long responses contribute more supervised tokens than short responses when loss is averaged over valid target tokens. A corpus with a few long explanations can therefore exert more gradient influence than a larger number of brief extraction examples. Sampling weights, example packing, maximum length, truncation, and the loss denominator should be chosen together and recorded.
+
+Truncation is particularly important in multi-turn data. Removing the beginning of a conversation can discard system instructions or the question that makes an assistant answer meaningful. Removing the end can cut the supervised answer and produce incomplete targets. A pipeline needs a declared rule and tests on representative long conversations, including tool results and retrieved context.
+
+```{python}
+examples={"short extraction":12,"long explanation":180,"tool conversation":95}
+total=sum(examples.values())
+for name,tokens in examples.items(): print(name,"supervised-token share",round(tokens/total,2))
+```
+
+## Level 4 - Audit and interpretation
+
+### Evaluate behaviour, not only response overlap
+
+Exact match is useful for extraction and tightly specified outputs. It is insufficient for many instruction tasks where several answers are valid. Evaluations should define the task, input availability, output criterion, scoring procedure, and any human-review protocol. They should compare the base and tuned checkpoints under the same template and decoding policy, then report both improvements and regressions.
+
+```{python}
+#| label: fig-adaptation-evaluation
+#| fig-cap: "Instruction-tuning evaluation compares the base and tuned models on target tasks and retained tasks under the same serving interface."
+#| fig-alt: "A diagram shows base and tuned checkpoints evaluated on instruction tasks and retained capability tasks, then reported separately."
+fig,ax=plt.subplots(figsize=(9,3.4)); ax.axis("off")
+for x,label,c in [(.35,"base\ncheckpoint",blue),(2.55,"tuned\ncheckpoint",orange),(5.05,"target-task\nevaluation",teal),(7.2,"retained-task\nevaluation",purple)]: ax.add_patch(Rectangle((x,1.3),1.55,.58,facecolor=c,edgecolor="white")); ax.text(x+.775,1.59,label,ha="center",va="center",color="white")
+ax.text(4.5,.55,"Report target gains and retained-task changes separately.",ha="center",color=grey); ax.set_xlim(0,9); ax.set_ylim(.2,2.25); plt.show()
+```
+
+### The run record must recover the exact interface
+
+An instruction-tuning record needs base checkpoint and tokenizer, template version, role and special-token rules, source and target masks, training examples and provenance, split policy, maximum length and truncation rule, optimiser settings, parameter scope, checkpoints, target and retained evaluations, decoding settings, and known failure cases. This is the minimum needed to distinguish a model change from a prompt-template or evaluation change.
+
+```{python}
+record={"base":"versioned checkpoint","template":"v3","target_mask":"assistant only","max_length":2048,"evaluation":"target and retained sets"}
+assert {"base","template","target_mask","evaluation"} <= set(record)
+print("instruction-tuning record complete")
+```
+
+## Common misconceptions
+
+- **Instruction tuning replaces the language-model objective.** It usually applies the same token loss to a different, masked demonstration distribution.
+- **Every token in a chat transcript should be supervised.** User and system text are commonly conditioning context, not desired output.
+- **A chat template can be changed without retraining.** Its role markers and separators alter the input token sequence.
+- **More demonstrations automatically give broader instruction following.** Coverage, quality, duplication, and task mix determine what is reinforced.
+- **Improved instruction scores prove no retained capability declined.** Regression tests are required.
+- **A compliant response is necessarily a correct response.** Format following and factual validity require separate evidence.
+
+## Exercises
+
+1. Distinguish pretraining and instruction-tuning data distributions.
+2. Mark context and target spans in a supplied chat transcript.
+3. Implement an assistant-only label mask for a two-turn example.
+4. Identify an off-by-one masking error and its consequence.
+5. Explain why template versioning is required at serving time.
+6. List provenance fields for a demonstration dataset.
+7. Design a split that limits near-duplicate instruction leakage.
+8. Compare target-task and retained-task evaluation.
+9. Explain one mechanism that can cause adaptation regression.
+10. State how tool-result spans should be treated in a declared pipeline.
+11. Calculate the supervised-token fraction for a supplied conversation.
+12. Propose a task category audit beyond simple example counts.
+13. Explain why exact match is insufficient for open-ended assistance.
+14. List metadata required to reproduce a tuned checkpoint.
+15. Design a test for a template mismatch after deployment.
+16. Identify the chapter that introduces preference optimisation.
+
+## Summary
+
+Instruction tuning adapts a base model to role-formatted demonstrations by applying supervised token loss to declared response spans. The template, tokenizer, target mask, data provenance, and loss denominator define the actual adaptation task. A tuned model must be evaluated for both target behaviour and retained capabilities.
+
+[Chapter 30](30-preference-optimisation.qmd) examines how preference data and related objectives compare candidate responses rather than simply reproducing one demonstration.
+
+## Looking ahead
+
+Instruction tuning fits stated target responses. [Chapter 30](30-preference-optimisation.qmd) examines learning from a different supervision form: comparisons between alternative responses to the same prompt.
+
+## Further reading
+
+Instruction tuning across many tasks is studied by @wei2022finetuned. InstructGPT documents supervised fine-tuning as one stage in an alignment pipeline [@ouyang2022training].

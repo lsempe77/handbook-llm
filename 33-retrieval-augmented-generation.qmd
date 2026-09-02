@@ -1,0 +1,261 @@
+---
+title: "Retrieval-augmented Generation"
+subtitle: "Indexing evidence, constructing context, and evaluating the full pipeline"
+---
+
+## Chapter orientation
+
+### Why this chapter matters
+
+Retrieval-augmented generation (RAG) supplies a language model with selected external material at inference time. It can make current, private, or domain-specific information available without placing all of it in model weights. It also introduces a pipeline: documents are collected and versioned, split into chunks, indexed, retrieved for a query, placed in a prompt, and used by a generator.
+
+An answer can fail at any stage. Relevant evidence may be absent from the corpus, split across chunks, missed by retrieval, removed by reranking or truncation, ignored by the model, or cited inaccurately. Evaluating only final answer quality cannot diagnose these causes. This chapter treats RAG as a system with explicit information boundaries.
+
+### Learning objectives
+
+By the end of this chapter, you should be able to:
+
+- distinguish a corpus, document, chunk, embedding, index, retriever, reranker, and generator;
+- explain dense and lexical retrieval at a conceptual level;
+- calculate simple retrieval recall for a labelled query set;
+- identify chunking, metadata, and context-budget choices as system decisions;
+- distinguish retrieval relevance, evidence use, citation accuracy, and final-answer correctness;
+- design a failure trace for a RAG answer; and
+- specify a versioned RAG evaluation record.
+
+### Running collection
+
+The running collection has three short chunks. A query is embedded or represented for retrieval; selected chunks are placed into a context template before answer generation.
+
+```{python}
+#| label: fig-rag-pipeline
+#| fig-cap: "A RAG system indexes versioned chunks, retrieves candidates for a query, constructs a bounded context, and generates an answer."
+#| fig-alt: "A pipeline flows from source documents to chunks and index, then query retrieval, context construction, and answer generation."
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle, FancyArrowPatch
+plt.style.use("seaborn-v0_8-whitegrid")
+blue,teal,orange,purple,grey="#24527a","#3a9188","#d97745","#7655a6","#5f6b76"
+fig,ax=plt.subplots(figsize=(11,3.3)); ax.axis("off")
+for x,label,c in [(.2,"versioned\ndocuments",blue),(2.15,"chunks +\nmetadata",teal),(4.1,"index",purple),(6.0,"retrieve +\nrerank",orange),(7.95,"bounded\ncontext",teal),(9.9,"answer",blue)]: ax.add_patch(Rectangle((x,1.25),1.35,.62,facecolor=c,edgecolor="white")); ax.text(x+.675,1.56,label,ha="center",va="center",color="white",fontsize=9)
+for x in [1.58,3.53,5.43,7.33,9.28]: ax.add_patch(FancyArrowPatch((x,1.56),(x+.52,1.56),arrowstyle="-|>",color=grey,mutation_scale=11))
+ax.text(5.5,.55,"The generator sees constructed context, not the complete indexed collection.",ha="center",color=grey); ax.set_xlim(0,11.4); ax.set_ylim(.2,2.3); plt.show()
+```
+
+::: {.concept-box .concept-core #concept-rag data-term="Retrieval-augmented generation" data-domain="Large language models"}
+**Retrieval-augmented generation.** A system that retrieves material from an indexed collection and supplies selected evidence to a generator. Its outcome depends on retrieval, context construction, generation, and source permissions rather than model weights alone.
+:::
+
+## Level 1 - Intuition
+
+### Retrieval changes which evidence is available at inference
+
+A base model answers from its parameters and the prompt. RAG adds a selected subset of an external collection to the prompt. This can support answers about documents added after pretraining, organisation-specific records, or source-backed claims. It does not guarantee that the retrieved text is relevant, current, authoritative, or used faithfully in the output.
+
+The indexed collection is therefore part of the system's knowledge boundary. A document outside it cannot be retrieved. A document inside it may still be unavailable because access control, filters, metadata, chunking, or index version exclude it. An answer should not imply that a collection was searched unless the trace shows the retrieval operation and corpus scope.
+
+```{python}
+chunks=[
+    {"id":"A", "text":"The programme began in 2022.","source":"report-v1"},
+    {"id":"B", "text":"Eligibility requires residence in the district.","source":"rules-v2"},
+    {"id":"C", "text":"Applications close on 30 June.","source":"rules-v2"},
+]
+for chunk in chunks: print(chunk["id"],chunk["text"])
+```
+
+### A chunk is a retrieval unit, not necessarily a meaningful document
+
+Indexes usually retrieve chunks rather than whole documents so that prompts fit a finite context window and search can identify a local passage. Chunk boundaries can split a table from its heading, separate a definition from an exception, or duplicate text across overlapping windows. Chunking policy therefore affects retrieval recall and what the generator can infer from the supplied evidence.
+
+```{python}
+#| label: fig-chunk-boundaries
+#| fig-cap: "Chunk boundaries and overlap determine which sentences are retrievable together and how much repeated text enters the index."
+#| fig-alt: "A document line is divided into three overlapping chunk windows, showing a sentence near a boundary appearing in two chunks."
+fig,ax=plt.subplots(figsize=(9,3)); ax.axis("off")
+ax.plot([.4,8.6],[1.6,1.6],color=grey,lw=3)
+for x,w,label,c in [(.6,2.8,"chunk 1",blue),(2.7,2.8,"chunk 2",teal),(4.8,2.8,"chunk 3",orange)]: ax.add_patch(Rectangle((x,1.25),w,.7,facecolor=c,alpha=.88,edgecolor="white")); ax.text(x+w/2,1.6,label,ha="center",va="center",color="white")
+ax.text(4.5,.55,"Overlap can preserve context across boundaries while increasing index size and repeated retrieval.",ha="center",color=grey); ax.set_xlim(0,9); ax.set_ylim(.2,2.3); plt.show()
+```
+
+## Level 2 - Retrieval mechanics
+
+### Lexical and dense retrieval use different matching signals
+
+Lexical retrieval scores overlap among query and document terms, often using weighted term statistics. It can be strong for exact names, identifiers, and rare terms. Dense retrieval maps queries and chunks to vectors and retrieves near neighbours under a similarity measure; it can retrieve semantically related wording even without exact overlap [@karpukhin2020dense]. Hybrid systems combine these signals, then may apply a reranker to a smaller candidate set.
+
+```{python}
+query=np.array([.8,.2])
+chunk_vectors=np.array([[.9,.1],[.3,.7],[.7,.25]])
+scores=chunk_vectors@query/(np.linalg.norm(chunk_vectors,axis=1)*np.linalg.norm(query))
+print("dense similarity scores:",np.round(scores,3))
+print("ranked chunks:",np.argsort(scores)[::-1])
+```
+
+Similarity is a retrieval score, not evidence that a chunk answers the query. A high-scoring passage can share topic words while missing the required fact. A reranker can improve ordering, but it adds another model, version, and failure point. Each score should be stored with the query and retrieved IDs to make the pipeline inspectable.
+
+```{python}
+#| label: fig-retrieval-ranking
+#| fig-cap: "Retrieval ranks candidate chunks by a matching score, but high score does not itself establish that a chunk contains sufficient evidence for the answer."
+#| fig-alt: "Three candidate chunks have descending dense similarity scores, with only one marked as containing the labelled evidence."
+names=["A","B","C"]; scores=np.array([.91,.76,.68]); relevant=np.array([False,True,False])
+fig,ax=plt.subplots(figsize=(7,3.8)); ax.bar(names,scores,color=[grey,teal,grey]); ax.set_ylim(0,1); ax.set_ylabel("retrieval score"); ax.set_title("Ranking and evidence relevance are distinct"); ax.text(1,.82,"labelled evidence",ha="center",color=teal); plt.tight_layout(); plt.show()
+```
+
+### Context construction is a budget allocation
+
+Retrieved chunks compete with system instructions, the user query, conversation history, formatting, and output reserve for the context window. A top-k setting is not enough to describe what the model sees: chunks may be truncated, deduplicated, reordered, filtered by permissions, or omitted when their combined length exceeds the budget. The final rendered prompt and token IDs should be available for an evaluated request.
+
+```{python}
+budget=1000; system=80; query_tokens=40; output_reserve=200
+chunk_lengths=np.array([320,280,260,240])
+available=budget-system-query_tokens-output_reserve
+selected=[]; used=0
+for length in chunk_lengths:
+    if used+length<=available: selected.append(length); used+=length
+print("chunk budget:",available,"selected lengths:",selected,"unused:",available-used)
+```
+
+## Level 3 - Grounded generation
+
+### Retrieval relevance is not answer grounding
+
+A response can be correct even when retrieval missed the evidence, because the base model already knew the fact. It can also be wrong after retrieving a relevant passage because the generator ignores, misreads, or combines it with unsupported content. A grounded-answer evaluation therefore separates at least four questions: was relevant evidence in the corpus; did retrieval return it; did the final prompt retain it; and is the claim supported by that retained evidence?
+
+```{python}
+trace={"evidence_in_corpus":True,"retrieved":True,"retained_in_prompt":True,"claim_supported":False}
+print(trace)
+```
+
+This separation prevents a final-answer score from being attributed automatically to one component. Retrieval recall can be low while generation remains plausible on familiar questions. High retrieval recall can coexist with poor answer faithfulness. The pipeline should report stage-specific metrics and a joined trace for the same labelled queries.
+
+### Citations need a defined link to evidence
+
+Adding source labels to a prompt does not ensure that an answer's citation supports its claim. A citation system needs a policy for attaching claim spans to retrieved chunks, resolving document versions and locations, and handling claims without sufficient support. It should distinguish a citation to a retrieved source from a verified entailment relation. The latter requires additional annotation, checking, or constrained generation.
+
+```{python}
+answer_claim="Applications close on 30 June."
+supporting_chunk="C"
+print({"claim":answer_claim,"citation":supporting_chunk,"source":"rules-v2"})
+```
+
+### Query rewriting and reranking alter the evidence path
+
+Some systems rewrite a user query before retrieval, expand it into several searches, or decompose a question into subquestions. These steps can improve retrieval when the original query is short or ambiguous, but they create another model-mediated transformation between the user request and the evidence. The audit should retain the original query, every rewritten query, retrieved candidates, reranker scores, and the policy that selected the final context.
+
+Reranking can promote passages that better match a query after a more expensive comparison. It can also remove a passage needed for a multi-document answer if the score is applied independently to each chunk. A pipeline should evaluate the final retained set, not only the first-stage retrieval list. The relevant evidence may require two chunks that each look incomplete alone.
+
+```{python}
+#| label: fig-evidence-path
+#| fig-cap: "Query rewriting, first-stage retrieval, reranking, and context selection form an evidence path that should be retained for each answer."
+#| fig-alt: "A user query is rewritten, retrieves four candidates, reranks them, and selects two context chunks before generation."
+fig,ax=plt.subplots(figsize=(10,3.3)); ax.axis("off")
+for x,label,c in [(.25,"user\nquery",blue),(2.0,"rewritten\nquery",teal),(3.85,"four retrieved\ncandidates",orange),(5.95,"reranked\nlist",purple),(7.8,"two retained\nchunks",teal)]: ax.add_patch(Rectangle((x,1.25),1.4,.62,facecolor=c,edgecolor="white")); ax.text(x+.7,1.56,label,ha="center",va="center",color="white",fontsize=9)
+for x in [1.67,3.52,5.62,7.47]: ax.add_patch(FancyArrowPatch((x,1.56),(x+.28,1.56),arrowstyle="-|>",color=grey,mutation_scale=11))
+ax.text(5,.55,"Record transformations and candidate IDs, not only the final answer.",ha="center",color=grey); ax.set_xlim(0,9.5); ax.set_ylim(.2,2.3); plt.show()
+```
+
+### Corpus quality and permission are upstream conditions
+
+Retrieval cannot correct a source that is out of date, internally inconsistent, wrongly parsed, or unavailable to the relevant user. Metadata should include provenance, update time, document type, ownership, access policy, and where possible an authoritative status. A retrieval score has no authority dimension unless the index and ranking policy encode and evaluate one.
+
+Permissions should be applied before generation context is constructed. Filtering a citation after an unrestricted chunk has entered the prompt does not remove its influence on the generated answer. Access-control tests should include direct queries, paraphrases, metadata-only probes, and queries that combine permitted with restricted documents. The result should state the identity and policy condition used in the test.
+
+```{python}
+candidate_ids=["A","B","C"]
+permitted={"A":True,"B":False,"C":True}
+retained=[chunk_id for chunk_id in candidate_ids if permitted[chunk_id]]
+print("permitted context chunks:",retained)
+```
+
+### Retrieval metrics require relevance judgements
+
+Recall@k depends on a judgement of which chunks are relevant for each query. Those judgements can be incomplete when several documents support an answer or when a passage is relevant only with another passage. Evaluation design should say whether relevance means answer-containing, sufficient evidence, useful context, or an authoritative source. The label definition determines what a retrieval score means.
+
+For multi-hop questions, report whether every required evidence item was retrieved, not only whether one related chunk appeared. For time-sensitive questions, check the source version and update date. For private corpora, use held-out documents and queries that were not used to tune chunking, retriever, or prompt templates. These boundaries limit accidental optimisation to an evaluation set.
+
+### Abstention is part of a grounded-answer policy
+
+When retrieval finds no sufficient evidence, a system can abstain, ask for clarification, state that the corpus does not establish an answer, or generate an unsupported response. The desired behaviour depends on the application, but it must be defined and evaluated. A retrieval score alone cannot decide whether evidence is sufficient for a claim.
+
+An abstention evaluation should include queries whose answer is absent, outdated, contradictory, or inaccessible under the requester's permissions. It should measure both unwarranted answers and unnecessary abstentions. This turns “do not hallucinate” into a measurable decision policy over known evidence conditions.
+
+```{python}
+cases=[{"evidence":"sufficient","action":"answer"},{"evidence":"absent","action":"abstain"},{"evidence":"restricted","action":"refuse access"}]
+for case in cases: print(case)
+```
+
+## Level 4 - Evaluation and operations
+
+### Evaluate the pipeline at its component boundaries
+
+For a labelled query set, retrieval recall at \(k\) asks whether at least one relevant chunk appears among the top \(k\). It does not measure whether the selected text was sufficient, whether it fitted in the context, or whether the answer used it correctly. Generation evaluation should add answer correctness, support or faithfulness, citation precision, abstention when evidence is missing, latency, and access-control compliance.
+
+```{python}
+relevant={"q1":{"B"},"q2":{"C"},"q3":{"A"}}
+retrieved={"q1":["A","B"],"q2":["B","C"],"q3":["C","B"]}
+hits=[bool(relevant[q].intersection(retrieved[q])) for q in relevant]
+print("recall@2:",sum(hits)/len(hits))
+```
+
+```{python}
+#| label: fig-rag-evaluation
+#| fig-cap: "RAG evaluation separates corpus coverage, retrieval recall, context retention, grounded-answer support, and service behaviour."
+#| fig-alt: "A staged diagram lists corpus, retrieval, prompt construction, generation, and service evaluation with distinct metrics."
+fig,ax=plt.subplots(figsize=(10,3.5)); ax.axis("off")
+stages=[("corpus\ncoverage",blue),("retrieval\nrecall",teal),("context\nretention",orange),("claim\nsupport",purple),("latency and\naccess control",blue)]
+for i,(label,c) in enumerate(stages):
+    x=.25+i*1.95; ax.add_patch(Rectangle((x,1.35),1.45,.62,facecolor=c,edgecolor="white")); ax.text(x+.725,1.66,label,ha="center",va="center",color="white",fontsize=9)
+ax.text(4.9,.55,"Each stage needs a metric and trace; final answer accuracy alone cannot locate failures.",ha="center",color=grey); ax.set_xlim(0,10); ax.set_ylim(.2,2.3); plt.show()
+```
+
+### Index updates and access policies are model inputs
+
+An operational RAG system must version source documents, chunks, embeddings, index build, retriever, reranker, prompt template, generator checkpoint, and access policy. Index updates can change answers without a model-weight update. Permissions should be enforced before a chunk enters the constructed prompt, and evaluation must test that restricted material cannot be retrieved or inferred from metadata.
+
+```{python}
+record={"corpus_version":"2026-08-20","chunker":"v4","index":"v12","retriever":"dense-v3","template":"v5","access_policy":"role-filter"}
+assert {"corpus_version","index","retriever","access_policy"} <= set(record)
+print("RAG run record complete")
+```
+
+## Common misconceptions
+
+- **RAG gives the model access to every indexed document.** It supplies only the chunks retained in one constructed context.
+- **A high retrieval score proves answer support.** Ranking and claim-level evidence are different objects.
+- **Chunking is only a performance detail.** It determines what can be retrieved and read together.
+- **A citation proves grounding.** It must be linked to a specific supporting claim and source version.
+- **Updating an index changes no model behaviour.** It changes the evidence that can enter inference prompts.
+- **Final answer accuracy diagnoses retrieval.** The failure may occur in corpus, retrieval, prompt construction, or generation.
+
+## Exercises
+
+1. Distinguish documents, chunks, embeddings, and index entries.
+2. Explain one consequence of chunk overlap.
+3. Calculate cosine similarity for a supplied query and chunks.
+4. Calculate recall@k for a labelled retrieval set.
+5. Compare lexical and dense retrieval for an identifier-heavy query.
+6. Design a context budget including system text and output reserve.
+7. Identify a case where relevant evidence is retrieved but unused.
+8. Specify a claim-to-citation linking policy.
+9. List RAG components that require version identifiers.
+10. Design an access-control retrieval test.
+11. Explain why index updates require regression evaluation.
+12. Separate corpus coverage from retrieval recall.
+13. Design a failure trace for an unsupported answer.
+14. State why a source label is not an entailment test.
+15. Propose a latency measurement across retrieval and generation.
+16. Identify the chapter that evaluates LLM reliability more broadly.
+
+## Summary
+
+RAG constructs a bounded model context from retrieved external chunks. Corpus scope, chunking, indexing, retrieval, reranking, context construction, generation, citations, and access controls form one system. Evaluation must separate evidence coverage, retrieval, prompt retention, claim support, and operational behaviour.
+
+[Chapter 34](34-evaluating-llms.qmd) brings these distinctions together in a broader treatment of capability measurement, reliability, contamination, and the limits of benchmark scores.
+
+## Looking ahead
+
+Retrieval-augmented generation combines a model with a corpus, retriever, and context-construction policy. [Chapter 34](34-evaluating-llms.qmd) examines how to evaluate that complete system, alongside the model-only and adaptation systems introduced in this part.
+
+## Further reading
+
+Retrieval-augmented generation is introduced by @lewis2020retrieval. Dense passage retrieval is developed by @karpukhin2020dense.

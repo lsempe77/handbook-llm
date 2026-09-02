@@ -1,0 +1,421 @@
+---
+title: "Concepts and Notation"
+subtitle: "Definitions collated from the chapter source boxes"
+---
+
+This appendix is generated from the marked concept boxes in the chapters. Definitions remain authored at their first conceptual home.
+
+## Foundations
+
+### Activation function
+
+*Core concept; [Chapter 7: activation functions](07-activation-functions.qmd#concept-activation-function).*
+
+**Activation function.** A fixed, usually coordinate-wise non-linear transformation applied to a layer's pre-activations. Activations allow stacked layers to represent relationships that a composition of affine transformations cannot. An activation used inside a hidden layer has a different role from an output transformation interpreted as a probability.
+
+### Artificial neuron
+
+*Core concept; [Chapter 5: artificial neuron](05-artificial-neuron.qmd#concept-artificial-neuron).*
+
+**Artificial neuron.** A unit that forms a weighted sum of input values, adds a bias, and may pass the result through an activation function. The weighted sum is an affine calculation; non-linearity enters only when an activation is applied. A neuron's weights are parameters, but not every model parameter is a connection weight.
+
+### Backpropagation
+
+*Core concept; [Chapter 4: backpropagation](04-backpropagation.qmd#concept-backpropagation).*
+
+**Backpropagation.** A method for calculating derivatives of a model's scalar loss with respect to its parameters by applying the chain rule backwards through the recorded forward computation. It calculates gradients; an optimiser uses those gradients to choose parameter updates.
+
+### Gradient descent
+
+*Core concept; [Chapter 3: gradient descent](03-gradient-descent.qmd#concept-gradient-descent).*
+
+**Gradient descent.** An optimisation procedure that changes parameters in the direction expected to reduce a stated loss locally. The **gradient** records how that loss changes with each parameter, and the **learning rate** sets the size of one update. A lower loss after an update is evidence about the specified objective, not a general guarantee about future performance.
+
+### Loss, metric, and objective
+
+*Distinction; [Chapter 2: models predictions loss](02-models-predictions-loss.qmd#concept-loss-metric-objective).*
+
+**Loss, metric, and objective.** A loss scores one prediction against a target. A metric reports a property relevant to evaluation or use. An objective is the quantity that the training procedure is instructed to optimise, which may combine a loss with penalties or constraints. The same formula can appear in more than one role, but the roles are not interchangeable.
+
+### Machine learning
+
+*Core concept; [Chapter 1: what is machine learning](01-what-is-machine-learning.qmd#concept-machine-learning).*
+
+**Machine learning.** A procedure that fits a parameterised mapping from inputs to outputs using examples and a stated objective. **Training** changes the fitted parameters; **inference** applies the resulting model to new inputs. A prediction can be useful without establishing that its inputs cause the outcome.
+
+### Model, parameters, prediction, target, and loss
+
+*Core concept; [Chapter 2: models predictions loss](02-models-predictions-loss.qmd#concept-model-loss).*
+
+**Model, parameters, prediction, target, and loss.** A model maps an input to a prediction through fitted parameters. The target is the observed outcome against which that prediction is assessed. A loss turns their discrepancy into a number that the training procedure can reduce; it does not by itself decide whether the resulting prediction serves the intended use.
+
+### Neural-network layer
+
+*Core concept; [Chapter 6: neural network layers](06-neural-network-layers.qmd#concept-neural-layer).*
+
+**Neural-network layer.** A shared transformation applied across a batch or sequence of representations. Its weight matrix and bias vector define how input coordinates are combined into output coordinates; broadcasting applies the same bias to each relevant observation. Layer shape determines both the representation interface and the number of trainable parameters.
+
+### Training loop
+
+*Core concept; [Chapter 8: small neural network](08-small-neural-network.qmd#concept-training-loop).*
+
+**Training loop.** The repeated sequence that selects a batch, runs a forward calculation, evaluates a loss, calculates gradients, and updates parameters. Its state includes more than model weights when resuming a run: optimiser state, random-number state, data order, and fitted preprocessing can change later updates or predictions.
+
+## Large language models
+
+### Benchmark score and deployment claim
+
+*Distinction; [Chapter 34: evaluating llms](34-evaluating-llms.qmd#concept-benchmark-deployment).*
+
+**Benchmark score and deployment claim.** A benchmark score estimates performance on its items and interface. A deployment claim requires evidence about the intended users, inputs, consequence, and system configuration; it cannot be inferred from the benchmark alone.
+
+### Configured context limit and supported length
+
+*Distinction; [Chapter 27: context windows model inference](27-context-windows-model-inference.qmd#concept-context-limit-supported-length).*
+
+**Configured context limit and supported length.** A configured limit is the maximum length an implementation accepts. Supported length is the range over which task performance has been evaluated. The first is a setting; the second is an evidence claim.
+
+### Context window and key-value cache
+
+*Core concept; [Chapter 27: context windows model inference](27-context-windows-model-inference.qmd#concept-context-window).*
+
+**Context window and key-value cache.** The context window is the finite token prefix a model can condition on in one request. A key-value cache stores prior attention states during decoding to avoid recomputation, while consuming memory that grows with active context.
+
+### Decoding
+
+*Core concept; [Chapter 28: decoding generation](28-decoding-generation.qmd#concept-decoding).*
+
+**Decoding.** The policy that turns a model's next-token distribution into an output sequence. Temperature, truncation, sampling, and stopping rules change the distribution of produced responses without changing the trained parameters.
+
+### Fine-tuning and PEFT
+
+*Core concept; [Chapter 31: full and parameter efficient fine tuning](31-full-and-parameter-efficient-fine-tuning.qmd#concept-fine-tuning).*
+
+**Fine-tuning and parameter-efficient fine-tuning.** Fine-tuning updates a pretrained checkpoint for a declared task. Full fine-tuning updates selected base parameters; PEFT retains most base weights and trains a smaller update module.
+
+### Full and parameter-efficient fine-tuning
+
+*Distinction; [Chapter 31: full and parameter efficient fine tuning](31-full-and-parameter-efficient-fine-tuning.qmd#concept-full-peft).*
+
+**Full and parameter-efficient fine-tuning.** Full fine-tuning changes broad base-model state. Parameter-efficient methods constrain trainable updates to selected modules or low-rank changes. The comparison includes task outcomes, memory, storage, and serving compatibility.
+
+### Instruction tuning
+
+*Core concept; [Chapter 29: instruction tuning](29-instruction-tuning.qmd#concept-instruction-tuning).*
+
+**Instruction tuning.** Supervised adaptation that trains a model to produce target responses within a declared conversation format. The target mask determines which tokens receive loss, while the template determines the interface supplied at training and use.
+
+### Instruction tuning and prompting
+
+*Distinction; [Chapter 29: instruction tuning](29-instruction-tuning.qmd#concept-instruction-prompting).*
+
+**Instruction tuning and prompting.** Instruction tuning changes a model through supervised parameter updates. Prompting changes the context supplied to a fixed model at inference time. Both can alter behaviour, but they make different resource and evidence claims.
+
+### LLM evaluation
+
+*Core concept; [Chapter 34: evaluating llms](34-evaluating-llms.qmd#concept-llm-evaluation).*
+
+**LLM evaluation.** Measurement of a stated system interface on a defined task population and scoring rule. A benchmark score is conditional evidence, shaped by the model, prompt, decoding policy, data provenance, and development history.
+
+### Next-token prediction
+
+*Core concept; [Chapter 25: next token prediction](25-next-token-prediction.qmd#concept-next-token-prediction).*
+
+**Next-token prediction.** A training objective that estimates a conditional distribution over the next token given an earlier token prefix. It trains a language model's distribution; it does not by itself specify a user task or a decoding policy.
+
+### Preference optimisation
+
+*Core concept; [Chapter 30: preference optimisation](30-preference-optimisation.qmd#concept-preference-optimisation).*
+
+**Preference optimisation.** Adaptation from comparisons between candidate responses to a shared prompt. It may use a reward model or a direct objective, but its claim remains tied to the judging process, candidate distribution, and reference policy.
+
+### Pretraining
+
+*Core concept; [Chapter 26: pretraining data objectives scale](26-pretraining-data-objectives-scale.qmd#concept-pretraining).*
+
+**Pretraining.** Training a base model on a large token stream under a stated prediction objective. Its claims depend on the corpus, data mixture, token budget, architecture, optimiser, and held-out evaluation record.
+
+### Quantisation
+
+*Core concept; [Chapter 32: quantisation efficient inference](32-quantisation-efficient-inference.qmd#concept-quantisation).*
+
+**Quantisation.** A representation of values using fewer or different numerical levels to reduce memory or computation. Its effect must be assessed on the stored values, the execution path, and the task outcome.
+
+### Retrieval-augmented generation
+
+*Core concept; [Chapter 33: retrieval augmented generation](33-retrieval-augmented-generation.qmd#concept-rag).*
+
+**Retrieval-augmented generation.** A system that retrieves material from an indexed collection and supplies selected evidence to a generator. Its outcome depends on retrieval, context construction, generation, and source permissions rather than model weights alone.
+
+### Token and tokenisation
+
+*Core concept; [Chapter 24: tokens tokenisation](24-tokens-tokenisation.qmd#concept-tokenisation).*
+
+**Token and tokenisation.** A token is a discrete identifier from a model vocabulary. Tokenisation maps text into such identifiers and back again. It changes sequence length, loss units, and which distinctions a language model can directly represent.
+
+### Token loss and task outcome
+
+*Distinction; [Chapter 25: next token prediction](25-next-token-prediction.qmd#concept-token-loss-task-outcome).*
+
+**Token loss and task outcome.** Token loss measures fit to the next-token target under a specified data distribution. A task outcome measures a separately defined property of a completed system response. Improvement in one does not establish improvement in the other.
+
+## Modern AI systems
+
+### Diffusion model
+
+*Core concept; [Chapter 45: diffusion models](45-diffusion-models.qmd#concept-diffusion).*
+
+**Diffusion model.** A generative model trained to reverse a declared corruption process. Training estimates a denoising relation; sampling repeatedly applies that relation under a schedule and any conditioning or guidance policy.
+
+### Mixture of experts
+
+*Core concept; [Chapter 43: mixture of experts models](43-mixture-of-experts-models.qmd#concept-moe).*
+
+**Mixture of experts.** A model with specialised expert modules selected by a router for each input or token. Total parameters, active parameters, capacity, routing load, and communication together determine its behaviour and cost.
+
+### Model behaviour and service behaviour
+
+*Distinction; [Chapter 48: serving deployment monitoring](48-serving-deployment-monitoring.qmd#concept-model-service).*
+
+**Model behaviour and service behaviour.** Model behaviour concerns outputs from a declared model interface. Service behaviour also includes queueing, batching, caching, tools, policies, traffic, and recovery. An offline model result does not establish an operational result.
+
+### Multimodal model
+
+*Core concept; [Chapter 46: multimodal models](46-multimodal-models.qmd#concept-multimodal-model).*
+
+**Multimodal model.** A system that represents, aligns, or generates across more than one data modality. Its claims depend on modality encoders, alignment data, fusion route, interface, and evaluation population.
+
+### Responsible use
+
+*Core concept; [Chapter 49: safety security responsible use](49-safety-security-responsible-use.qmd#concept-responsible-use).*
+
+**Responsible use.** A decision to operate a named system for a stated use with evidence, safeguards, ownership, residual-risk acceptance, and a route for review or remedy. It is not a property supplied automatically by a model.
+
+### Safety, security, and misuse
+
+*Distinction; [Chapter 49: safety security responsible use](49-safety-security-responsible-use.qmd#concept-safety-security-misuse).*
+
+**Safety, security, and misuse.** Safety concerns harmful system outcomes; security concerns adversarial compromise of assets or boundaries; misuse concerns requests or uses outside an application's acceptable scope. The same output can involve more than one pathway, but each requires its own control.
+
+### Scaling law
+
+*Core concept; [Chapter 47: scaling laws and compute](47-scaling-laws-and-compute.qmd#concept-scaling-law).*
+
+**Scaling law.** A fitted empirical relation between declared resource inputs and a measured outcome over a stated model family and range. It supports conditional allocation decisions, not a universal capability claim.
+
+### Serving system
+
+*Core concept; [Chapter 48: serving deployment monitoring](48-serving-deployment-monitoring.qmd#concept-serving-system).*
+
+**Serving system.** The operational path that admits, queues, processes, checks, returns, and records model requests. Latency, throughput, caching, routing, fallbacks, and monitoring determine delivered behaviour.
+
+### Vision Transformer
+
+*Core concept; [Chapter 44: vision transformers](44-vision-transformers.qmd#concept-vision-transformer).*
+
+**Vision Transformer.** A Transformer-based visual model that converts an image into patch representations and processes them as a sequence. Patch size, preprocessing, resolution, and positional information are part of the visual interface.
+
+## Reasoning models
+
+### Distillation
+
+*Core concept; [Chapter 41: distillation and efficient reasoning](41-distillation-and-efficient-reasoning.qmd#concept-distillation).*
+
+**Distillation.** Training a student system to reproduce selected teacher behaviour under a stated target and data process. Its efficiency claim must include target quality, training cost, serving route, and retained task performance.
+
+### False acceptance and false rejection
+
+*Distinction; [Chapter 36: evaluating reasoning](36-evaluating-reasoning.qmd#concept-verifier-errors).*
+
+**False acceptance and false rejection.** False acceptance occurs when a verifier approves an incorrect candidate. False rejection occurs when it rejects a correct one. Their costs depend on the task and determine whether a threshold or abstention route is appropriate.
+
+### GRPO
+
+*Core concept; [Chapter 40: grpo and related training methods](40-grpo-and-related-training-methods.qmd#concept-grpo).*
+
+**GRPO.** Group Relative Policy Optimisation samples several completions for the same prompt and uses their relative rewards to construct an update signal. Group construction and reward variation are part of the method.
+
+### Inference-time scaling
+
+*Core concept; [Chapter 37: inference time scaling](37-inference-time-scaling.qmd#concept-inference-time-scaling).*
+
+**Inference-time scaling.** Changing task performance by allocating more computation after training, for example through sampling, voting, verification, or search. Its evidence must include candidate count, selection rule, cost, and task-specific outcome.
+
+### Measured proxy and intended outcome
+
+*Distinction; [Chapter 42: limits and open questions](42-limits-and-open-questions.qmd#concept-proxy-outcome).*
+
+**Measured proxy and intended outcome.** A measured proxy records the property a scorer actually observes. An intended outcome is the task property the system is meant to support. Their relation is an empirical claim requiring independent tests.
+
+### Outcome reward and process supervision
+
+*Distinction; [Chapter 39: reinforcement learning for reasoning](39-reinforcement-learning-for-reasoning.qmd#concept-outcome-process-supervision).*
+
+**Outcome reward and process supervision.** Outcome reward scores the completed result. Process supervision scores intermediate steps. The first can miss where an error arose; the second depends on a reliable step-level evaluator.
+
+### Proxy limit
+
+*Core concept; [Chapter 42: limits and open questions](42-limits-and-open-questions.qmd#concept-proxy-limit).*
+
+**Proxy limit.** A proxy is a measurable signal used to guide a decision when the intended outcome is not directly observed. Optimising it can improve the proxy while leaving the intended outcome unchanged or worse.
+
+### Reasoning system
+
+*Core concept; [Chapter 35: what makes a reasoning model](35-what-makes-a-reasoning-model.qmd#concept-reasoning-system).*
+
+**Reasoning system.** A model and procedure that allocates additional computation to candidates, search, verification, or refinement for a stated task. A visible rationale is an output record, not evidence by itself of the mechanism that produced a correct result.
+
+### Reinforcement learning for reasoning
+
+*Core concept; [Chapter 39: reinforcement learning for reasoning](39-reinforcement-learning-for-reasoning.qmd#concept-reinforcement-learning).*
+
+**Reinforcement learning for reasoning.** Training a policy from rewards assigned to sampled rollouts or trajectories. The reward, action boundary, rollout distribution, and policy constraint define what the update can learn.
+
+### Self-refinement and search
+
+*Core concept; [Chapter 38: self refinement and search](38-self-refinement-and-search.qmd#concept-self-refinement).*
+
+**Self-refinement and search.** A procedure that critiques, revises, branches, or selects candidate trajectories. Its results depend on the critique source, revision rule, frontier policy, verifier, and stopping condition.
+
+### Verifier
+
+*Core concept; [Chapter 36: evaluating reasoning](36-evaluating-reasoning.qmd#concept-verifier).*
+
+**Verifier.** A procedure that evaluates a candidate answer or process against a stated rule. Its usefulness depends on coverage, false acceptance, false rejection, abstention, and the decision made from its output.
+
+### Visible trace and causal mechanism
+
+*Distinction; [Chapter 35: what makes a reasoning model](35-what-makes-a-reasoning-model.qmd#concept-trace-mechanism).*
+
+**Visible trace and causal mechanism.** A trace reports words or steps produced by a system. A causal mechanism is the intervention or computation that changes an outcome. Trace quality and task correctness require separate tests.
+
+## Representations and Transformers
+
+### Attention
+
+*Core concept; [Chapter 19: attention](19-attention.qmd#concept-attention).*
+
+**Attention.** Query-dependent weighted retrieval from a set of value representations. Queries and keys determine weights; values supply the retrieved content. Large attention weights do not by themselves establish a causal explanation.
+
+### Attention sublayer and Transformer block
+
+*Distinction; [Chapter 22: transformer block](22-transformer-block.qmd#concept-attention-block).*
+
+**Attention sublayer and Transformer block.** Attention retrieves and combines information across positions. A complete Transformer block additionally applies residual connections, normalisation, and feed-forward transformation; attention alone is not the whole architecture.
+
+### Attention weight and causal explanation
+
+*Distinction; [Chapter 19: attention](19-attention.qmd#concept-attention-explanation).*
+
+**Attention weight and causal explanation.** An attention weight records the model's retrieval calculation for one configuration. A causal explanation requires an intervention that changes the purported evidence and measures the resulting output change.
+
+### Embedding
+
+*Core concept; [Chapter 17: embeddings](17-embeddings.qmd#concept-embedding).*
+
+**Embedding.** A learned vector representation for a discrete item. An embedding matrix maps identifiers to coordinates; similarity between vectors is evidence about the training relation and task, not an intrinsic meaning.
+
+### Encoder, decoder, and encoder-decoder model
+
+*Core concept; [Chapter 23: encoder decoder models](23-encoder-decoder-models.qmd#concept-transformer-family).*
+
+**Encoder, decoder, and encoder-decoder model.** An encoder represents an available input with bidirectional access. A decoder generates causally from a prefix. An encoder-decoder model represents a source then generates a target through cross-attention.
+
+### Positional information
+
+*Core concept; [Chapter 21: positional information](21-positional-information.qmd#concept-positional-information).*
+
+**Positional information.** A representation of order supplied to an architecture whose attention calculation would otherwise be insensitive to sequence permutation. Absolute, relative, and rotary schemes make different assumptions about position and distance.
+
+### Recurrent state
+
+*Core concept; [Chapter 18: sequence modelling before transformers](18-sequence-modelling-before-transformers.qmd#concept-recurrent-state).*
+
+**Recurrent state.** A representation carried from one sequence position to the next. It permits later outputs to depend on earlier inputs, but finite state and sequential computation limit what information can be retained and used.
+
+### Representation
+
+*Core concept; [Chapter 16: vectors tensors representations](16-vectors-tensors-representations.qmd#concept-representation).*
+
+**Representation.** A vector or tensor whose coordinates are used by a model to carry information about an input. Its shape states a computational interface; its usefulness depends on the distinctions it preserves for a stated task.
+
+### Self-attention and cross-attention
+
+*Distinction; [Chapter 20: self attention multi head](20-self-attention-multi-head.qmd#concept-self-cross-attention).*
+
+**Self-attention and cross-attention.** Self-attention draws queries, keys, and values from one sequence. Cross-attention draws queries from one representation and keys and values from another, creating an explicit information boundary.
+
+### Self-attention and multi-head attention
+
+*Core concept; [Chapter 20: self attention multi head](20-self-attention-multi-head.qmd#concept-self-attention).*
+
+**Self-attention and multi-head attention.** Self-attention lets each position retrieve from eligible positions in the same sequence. Multi-head attention performs several learned retrievals in parallel. A mask defines which positions are eligible.
+
+### Transformer block
+
+*Core concept; [Chapter 22: transformer block](22-transformer-block.qmd#concept-transformer-block).*
+
+**Transformer block.** A residual computation that combines attention, normalisation, and a position-wise feed-forward network. The block transforms a sequence representation while preserving a direct residual route for each position.
+
+## Training and evaluation
+
+### Batch, layer, group, and RMS normalisation
+
+*Distinction; [Chapter 12: normalisation](12-normalisation.qmd#concept-normalisation-variants).*
+
+**Batch, layer, group, and RMS normalisation.** Batch normalisation uses statistics across observations. Layer normalisation uses features within one observation or token. Group normalisation uses channel groups, while RMS normalisation rescales a vector without subtracting its mean. These are different reference choices, not interchangeable rescaling labels.
+
+### Checkpoint and recovery state
+
+*Core concept; [Chapter 14: training loops batches checkpoints](14-training-loops-batches-checkpoints.qmd#concept-checkpoint).*
+
+**Checkpoint and recovery state.** A checkpoint records a model at a stated point in training. Recovering a run may also require optimiser state, scheduler state, random-number state, data position, and mixed-precision state. A saved weight file alone does not necessarily reproduce the next update.
+
+### Generalisation and overfitting
+
+*Core concept; [Chapter 9: generalisation overfitting](09-generalisation-overfitting.qmd#concept-generalisation).*
+
+**Generalisation and overfitting.** Generalisation is performance on observations not used to fit or select the procedure, within a stated target population. Overfitting occurs when an apparent training improvement relies on details that do not transfer. Neither label can be inferred from training loss alone.
+
+### Initialisation and gradient flow
+
+*Core concept; [Chapter 11: initialisation gradient flow](11-initialisation-gradient-flow.qmd#concept-initialisation).*
+
+**Initialisation and gradient flow.** Initialisation sets the parameter values before training. Gradient flow describes how derivative signals propagate through the resulting computation. Both depend on architecture, activation, normalisation, precision, and the optimiser.
+
+### L2 regularisation and weight decay
+
+*Distinction; [Chapter 13: optimisers learning rate schedules](13-optimisers-learning-rate-schedules.qmd#concept-l2-weight-decay).*
+
+**L2 regularisation and decoupled weight decay.** L2 regularisation adds a parameter penalty to the objective. Decoupled weight decay shrinks parameters as part of the update rule. They can behave similarly in simple settings but are not generally the same under adaptive optimisation.
+
+### Normalisation
+
+*Core concept; [Chapter 12: normalisation](12-normalisation.qmd#concept-normalisation).*
+
+**Normalisation.** A transformation that expresses values relative to a selected reference set. The reference can be a batch, one observation, a channel group, or a vector; that choice determines which values influence one another and how training differs from inference.
+
+### Optimiser and learning-rate schedule
+
+*Core concept; [Chapter 13: optimisers learning rate schedules](13-optimisers-learning-rate-schedules.qmd#concept-optimiser).*
+
+**Optimiser and learning-rate schedule.** An optimiser transforms gradients into parameter updates and may retain state from earlier updates. A learning-rate schedule changes update scale over training. Both are part of the fitted procedure and must be recorded with the model.
+
+### Regularisation
+
+*Core concept; [Chapter 10: regularisation](10-regularisation.qmd#concept-regularisation).*
+
+**Regularisation.** A change to the learning procedure that favours some fitted solutions over others. Penalties, dropout, augmentation, and early stopping act through different mechanisms; each requires a stated strength or selection rule.
+
+### Training systems
+
+*Core concept; [Chapter 15: efficient training systems](15-efficient-training-systems.qmd#concept-training-systems).*
+
+**Training systems.** The hardware and software path that turns a training design into updates under memory, arithmetic, and communication limits. Throughput, precision, recomputation, and parallelism change the cost and sometimes the numerical path of a run.
+
+### Training, validation, and test sets
+
+*Distinction; [Chapter 9: generalisation overfitting](09-generalisation-overfitting.qmd#concept-training-validation-test).*
+
+**Training, validation, and test sets.** Training data estimate parameters. Validation data support choices among procedures or checkpoints and therefore belong to development. A test set is reserved for the final assessment after those choices are fixed. A **held-out** set is excluded from the particular fitting or selection stage under discussion; it is not automatically an untouched final test set.
+

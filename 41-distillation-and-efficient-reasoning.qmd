@@ -1,0 +1,231 @@
+---
+title: "Distillation and Efficient Reasoning"
+subtitle: "Transferring behaviour from slower teachers to cheaper students"
+---
+
+## Chapter orientation
+
+### Why this chapter matters
+
+A reasoning system can improve accuracy by sampling, searching, verifying, or using a larger model, but these procedures can be too slow or costly for every request. Distillation trains a student to imitate selected teacher outputs or distributions. In reasoning settings, the teacher may provide answers, checked solution traces, candidate rankings, or a routing policy that decides when extra computation is warranted.
+
+Distillation transfers observed behaviour under a data and interface distribution. It does not prove that the student has acquired the teacher's internal computation, and it can transfer errors, style, or reward-hacking patterns. This chapter treats teacher generation, selection, student training, and efficiency evaluation as one pipeline.
+
+### Learning objectives
+
+By the end of this chapter, you should be able to:
+
+- distinguish teacher, student, distillation dataset, and deployment policy;
+- explain answer, trace, and logit distillation;
+- identify teacher-selection and trace-quality risks;
+- compare teacher and student on accuracy, latency, tokens, and cost;
+- describe adaptive routing between a student and teacher; and
+- specify a distillation audit record.
+
+### Running system
+
+The teacher uses a larger inference budget to generate and verify candidates. Accepted outputs become a dataset for a smaller student, which is then evaluated without assuming that imitation loss measures reasoning quality.
+
+```{python}
+#| label: fig-distillation-pipeline
+#| fig-cap: "A teacher generates candidates under a larger budget, a selection policy retains training targets, and a student is trained and evaluated for accuracy and efficiency."
+#| fig-alt: "A flow shows task prompts to teacher rollouts, verifier selection, distillation data, student training, and student deployment."
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle, FancyArrowPatch
+plt.style.use("seaborn-v0_8-whitegrid")
+blue,teal,orange,purple,grey="#24527a","#3a9188","#d97745","#7655a6","#5f6b76"
+fig,ax=plt.subplots(figsize=(10,3.4)); ax.axis("off")
+for x,label,c in [(.2,"prompts",blue),(1.85,"teacher\nrollouts",purple),(3.65,"verify /\nselect",orange),(5.45,"distillation\ndata",teal),(7.35,"student",blue)]: ax.add_patch(Rectangle((x,1.3),1.3,.62,facecolor=c,edgecolor="white")); ax.text(x+.65,1.61,label,ha="center",va="center",color="white",fontsize=9)
+for x in [1.53,3.33,5.13,7.03]: ax.add_patch(FancyArrowPatch((x,1.61),(x+.25,1.61),arrowstyle="-|>",color=grey,mutation_scale=11))
+ax.text(4.8,.55,"The selected teacher output is a training target, not a certificate of faithful reasoning.",ha="center",color=grey); ax.set_xlim(0,8.9); ax.set_ylim(.2,2.3); plt.show()
+```
+
+::: {.concept-box .concept-core #concept-distillation data-term="Distillation" data-domain="Reasoning models"}
+**Distillation.** Training a student system to reproduce selected teacher behaviour under a stated target and data process. Its efficiency claim must include target quality, training cost, serving route, and retained task performance.
+:::
+
+## Level 1 - Intuition
+
+### A teacher can spend more computation than a student
+
+The teacher may be larger, use more samples, call a verifier, or search longer trajectories. The student is trained to produce a useful answer with fewer parameters, shorter outputs, or one pass. The intended gain is a better accuracy–latency–cost frontier, not necessarily identical outputs.
+
+```{python}
+systems={"teacher":{"accuracy":.78,"tokens":1800,"latency":4.1},"student":{"accuracy":.69,"tokens":260,"latency":.5}}
+for name,metrics in systems.items(): print(name,metrics)
+```
+
+### Distillation targets can have different information
+
+Answer distillation trains on a final selected answer. Trace distillation includes intermediate text. Logit distillation matches a teacher distribution over tokens. Each target changes what the student can imitate. A long teacher trace can contain useful decomposition, unnecessary prose, or an error that happened not to affect the final answer. Selection and filtering are therefore part of the dataset construction.
+
+```{python}
+#| label: fig-target-types
+#| fig-cap: "Distillation can target final answers, visible traces, or teacher probability distributions; these targets transfer different information and risks."
+#| fig-alt: "Three boxes labelled answer, trace, and logits feed from a teacher to a student with notes on their distinct information content."
+fig,ax=plt.subplots(figsize=(8.5,3.2)); ax.axis("off")
+for i,(label,c) in enumerate([("answer",blue),("trace",orange),("logits",teal)]): ax.add_patch(Rectangle((.5+i*2.65,1.35),1.8,.6,facecolor=c,edgecolor="white")); ax.text(1.4+i*2.65,1.65,label,ha="center",va="center",color="white")
+ax.text(4.3,.55,"Choose targets according to the student task and evaluation, not because a trace appears explanatory.",ha="center",color=grey); ax.set_xlim(0,8.5); ax.set_ylim(.2,2.3); plt.show()
+```
+
+### A target needs provenance as well as content
+
+For every retained target, record which teacher version generated it, the prompt and context supplied to the teacher, generation settings, tools or retrieval sources used, selection rule, verification result, and date. A student trained on an answer produced with a private retrieval index or an unavailable tool may learn a response pattern that cannot be supported at deployment. A student trained on public sources may still need a record of the source boundary when the task asks for citations or time-sensitive facts.
+
+Provenance also separates teacher quality from data leakage. If a teacher response was generated after exposure to an evaluation item or with access to its answer key, it should not become a target for a student evaluated on that item family. Classical distillation transfers a teacher signal through a defined training objective; the signal is only interpretable when its source distribution and interface are known [@hinton2015distilling].
+
+## Level 2 - Data and training mechanics
+
+### Teacher filtering determines what is learned
+
+Teacher outputs can be retained only when an exact verifier accepts, when several samples agree, when a human reviewer approves, or when a learned score crosses a threshold. Each policy changes coverage. Filtering only easy verified examples can create a clean but narrow student dataset; retaining unverified traces can transfer errors and unsupported claims.
+
+```{python}
+teacher_outputs=[{"answer":12,"verified":True},{"answer":13,"verified":False},{"answer":12,"verified":True}]
+targets=[row for row in teacher_outputs if row["verified"]]
+print("retained targets:",targets)
+```
+
+The student loss can be ordinary next-token cross-entropy over selected targets, a divergence from teacher logits, or a mixture with original data. The data mixture, target mask, template, tokenizer, and maximum length remain the training contract from Chapters 25 and 29.
+
+Target selection is a substantive modelling choice. A verified final answer may be appropriate when the deployment task only needs a final answer. A trace may be retained when intermediate steps are needed for checking or user-facing explanation, but it should be filtered separately from the answer. A teacher can produce a correct answer with an unsupported trace, or a useful trace that is too long for the student's context and serving budget. Store answer and trace acceptance decisions separately so that later evaluation can identify what the student was trained to imitate.
+
+```{python}
+#| label: fig-target-filtering
+#| fig-cap: "Teacher outputs can be filtered separately for answer correctness, trace quality, length, and duplication; the retained dataset depends on the declared deployment target."
+#| fig-alt: "A flow chart shows teacher outputs passing through answer verification, trace review, length limit, and deduplication before becoming targets."
+fig,ax=plt.subplots(figsize=(9.2,3.7)); ax.axis("off")
+steps=[("teacher\noutputs",purple),("answer\ncheck",orange),("trace\nreview",teal),("length and\ndeduplication",blue),("targets",purple)]
+for i,(label,c) in enumerate(steps):
+    x=.2+i*1.8; ax.add_patch(Rectangle((x,1.45),1.25,.58,facecolor=c,edgecolor="white")); ax.text(x+.625,1.74,label,ha="center",va="center",color="white",fontsize=8)
+    if i<len(steps)-1: ax.add_patch(FancyArrowPatch((x+1.28,1.74),(x+1.72,1.74),arrowstyle="-|>",color=grey,mutation_scale=10))
+ax.text(4.6,.65,"Keep rejection reasons: incorrect answer, unsupported trace, excess length, or duplicate target.",ha="center",color=grey,fontsize=9)
+ax.set_xlim(0,9.1); ax.set_ylim(.25,2.5); plt.show()
+```
+
+### Filtering changes coverage and the student task distribution
+
+Filtering is often described as quality control, but it also changes which problems the student sees. Exact verification can concentrate targets in tasks with easy-to-check answers. A length limit can remove the multi-step cases that motivated the teacher. Deduplication can reduce repeated templates while also removing an important high-frequency deployment pattern. Report retention rates by task type, difficulty proxy, target length, verifier result, and rejection reason.
+
+The student dataset may combine teacher targets with original instruction data, human-written examples, or tasks designed to preserve general capabilities. The mixture weights define a trade-off between imitation of the teacher and retention of behaviours outside the teacher-target distribution. Changing that mixture changes the effective objective. Hold the evaluation suite fixed and report student outcomes by the sources of the training mixture rather than treating a single loss value as evidence of general transfer.
+
+Target diversity needs its own review. Multiple teacher answers can encode alternative valid strategies, but a dataset dominated by one preferred trace style can narrow the student's outputs and make it brittle when a task requires another route. Group targets by task, answer form, length, tool use, and verifier outcome; then inspect whether the retained distribution reflects deployment demand or only the teacher's easiest successes. Diversity is not a goal in itself. It is evidence about the range of behaviour the student has an opportunity to learn.
+
+Evaluate the student both on target-like held-out tasks and on tasks that deliberately require a different valid answer form. The first tests transfer fidelity; the second tests whether filtering produced an unnecessarily narrow response policy.
+
+Report both results before choosing a target-filtering policy for deployment.
+
+## Level 3 - Efficiency and routing
+
+### Efficiency needs a matched comparison
+
+Compare teacher and student under the same task set, prompt template, decoding rule, context policy, and scoring criterion. Report accuracy, calibration or abstention where relevant, generated tokens, model calls, peak memory, latency distribution, throughput, and cost. A student that copies short answers may appear efficient while failing tasks that need a longer explanation or tool call.
+
+```{python}
+#| label: fig-frontier
+#| fig-cap: "Teacher and student systems should be compared on an accuracy–latency–cost frontier under a matched task and serving interface."
+#| fig-alt: "A scatter plot places teacher, student, and routed system at different latency and accuracy coordinates."
+fig,ax=plt.subplots(figsize=(6.8,4)); x=[4.1,.5,1.0]; y=[.78,.69,.74]; labels=["teacher","student","routed"]
+ax.scatter(x,y,s=100,color=[purple,blue,teal]);
+for a,b,l in zip(x,y,labels): ax.text(a,b+.01,l,ha="center")
+ax.set_xlabel("latency"); ax.set_ylabel("accuracy"); ax.set_ylim(.6,.82); ax.set_title("Illustrative accuracy-latency trade-off"); plt.tight_layout(); plt.show()
+```
+
+### Efficiency claims need a break-even boundary
+
+Teacher generation is an upfront cost that can be amortised only over a stated number of student-served requests. Let teacher-data generation cost be (C_T), student training cost be (C_S), teacher serving cost per request be (c_T), and student serving cost be (c_S). The student becomes cheaper than teacher-only serving after enough requests that the saved per-request cost exceeds (C_T+C_S), subject to the quality constraint that motivated distillation. The calculation changes when a routed system still sends some requests to the teacher.
+
+Memory footprint and throughput can matter separately from single-request latency. A smaller student may permit larger batches or a cheaper device, but a long student trace can erase the expected token saving. Report the serving configuration, batch policy, precision, context length, caching policy, and quality threshold used for the comparison. Chapter 32 explains some execution mechanisms; this chapter uses them only to define a matched teacher–student efficiency claim.
+
+### Routing can reserve the teacher for difficult inputs
+
+A deployment can use a student for routine requests and route uncertain, high-stakes, or verifier-failing requests to a slower teacher. The routing signal must be available before the final answer and evaluated by route. A student confidence score can be miscalibrated; a failed verifier may be a verifier limitation rather than evidence of a difficult problem.
+
+Routing has false positives and false negatives. An unnecessary teacher escalation consumes the budget without improving the answer. A missed escalation leaves a difficult input with the student. Evaluate routing on a held-out set by reporting the fraction routed, student-only accuracy, teacher-routed accuracy, and the counterfactual performance of the alternative route where it can be obtained. The threshold is a deployment decision that trades expected error against latency and cost.
+
+```{python}
+#| label: fig-routing-errors
+#| fig-cap: "Adaptive routing has two error types: unnecessary teacher escalation and missed escalation of an input on which the student would fail."
+#| fig-alt: "A two-by-two matrix compares student or teacher route decisions against whether the student was sufficient or a teacher was needed."
+matrix=np.array([[62,8],[12,18]])
+fig,ax=plt.subplots(figsize=(5.5,4)); ax.imshow(matrix,cmap="Purples")
+ax.set_xticks([0,1],["student sufficient","teacher needed"]); ax.set_yticks([0,1],["student route","teacher route"])
+for i in range(2):
+    for j in range(2): ax.text(j,i,str(matrix[i,j]),ha="center",va="center",fontsize=14)
+ax.set_title("Illustrative routing confusion matrix"); plt.tight_layout(); plt.show()
+```
+
+```{python}
+uncertainty=np.array([.1,.7,.3]); routes=np.where(uncertainty>.5,"teacher","student")
+print(routes)
+```
+
+### Routing needs abstention, fallback, and drift rules
+
+The routing policy should specify what happens when its uncertainty signal is unavailable, the student output cannot be parsed, the teacher is unavailable, or the request falls outside the routing model's intended domain. A system can abstain, use a conservative teacher route, return a bounded student answer, or request clarification. These choices change both error and cost and should be evaluated as policy branches rather than handled silently.
+
+Routing also changes over time when the request distribution, student version, teacher version, or verifier changes. Monitor the routed fraction, escalation reasons, teacher benefit on a sampled counterfactual set, and route-specific failure categories. A rising escalation rate may indicate that the student no longer covers the workload; a falling rate may reflect a threshold change rather than a better student. Keep the threshold and routing model version in the deployment record.
+
+## Level 4 - Audit and limits
+
+### Distillation can transmit errors and incentives
+
+The teacher may be wrong, exploit a reward, cite unavailable sources, or produce a plausible trace that is not faithful. A verified answer target can still hide an invalid process; a trace target can teach stylistic reasoning without improved outcomes. Audit teacher error categories, filtering exclusions, data overlap with evaluations, and student regressions on inputs unlike the teacher dataset.
+
+Efficiency claims need the whole pipeline boundary. Teacher-data generation can be expensive even if the student is cheap at serving time. Report whether the claimed saving is per request, after amortising teacher generation over a stated number of requests, or at a fixed quality threshold. A routed system also needs a route-level error record: which inputs were escalated, why, and whether the teacher actually improved the result.
+
+### Teacher–student disagreement identifies what was and was not transferred
+
+Evaluate cases where teacher and student disagree, including teacher-correct/student-wrong, student-correct/teacher-wrong, both-wrong, and answers that differ only in format or trace. This is more informative than an average imitation loss. A student may improve on a narrow deployment slice by avoiding an expensive teacher habit, while losing performance on tasks that require the teacher's search or tool use. These outcomes need task scoring, not a presumption that the teacher is always the gold standard.
+
+Regression tests should cover inputs outside the teacher-target distribution: different lengths, formats, domains, languages where relevant, tool availability, and adversarial or malformed requests. The objective is to identify the scope of transfer and the system conditions under which the student should defer, not to claim that a student contains a compressed copy of all teacher capabilities.
+
+```{python}
+record={"teacher":"search-v2","selection":"exact verifier","target":"answer only","student":"small-v1","routing":"uncertainty threshold","evaluation":"held-out"}
+assert {"teacher","selection","target","student","evaluation"} <= set(record)
+print("distillation record complete")
+```
+
+The audit record should include the cost of target generation and filtering, data retention by reason, student training configuration, route policy and threshold, and the model versions used for every comparison. If the teacher is updated, regenerate or version the target set rather than treating new teacher outputs as interchangeable with the old dataset. These fields permit a later evaluator to separate a student-model change from a new teacher, a changed filter, or a change in the request mix.
+
+## Common misconceptions
+
+- **A distilled student contains the teacher's reasoning procedure.** It learns from selected outputs under a limited distribution.
+- **Verified targets make student evaluation unnecessary.** The student can fail to generalise or change formatting and stopping behaviour.
+- **Shorter traces always mean efficient reasoning.** They can omit needed computation or explanation.
+- **Routing removes the need to evaluate the student.** Each route and routing error requires measurement.
+- **A student matching teacher loss has matched task capability.** Outcome and systems evaluation remain necessary.
+
+## Exercises
+
+1. Distinguish answer, trace, and logit distillation.
+2. Design a teacher-output filtering rule and state its coverage risk.
+3. Compare teacher and student on matched accuracy and latency.
+4. Define a pre-answer routing signal for teacher escalation.
+5. Identify a teacher error a verified final answer could conceal.
+6. List fields required for a distillation record.
+7. Explain why a short student output can be insufficient.
+8. Design a regression test outside the teacher-target distribution.
+9. Compare one-pass student and routed deployment cost.
+10. Separate answer correctness and trace-quality filtering in a target record.
+11. Construct a case in which a student has lower imitation loss but lower task accuracy.
+12. Define an unnecessary escalation and a missed escalation.
+13. State how teacher-data generation cost should be amortised in a deployment claim.
+14. Design a held-out test for a routing threshold.
+15. Explain why a verified answer does not certify a retained teacher trace.
+16. Identify the final chapter's limits-and-open-questions focus.
+
+## Summary
+
+Distillation transfers selected teacher behaviour to a student that can be cheaper to deploy. Its result depends on teacher generation, target type, filtering, student training, and routing policy. Evaluate the student and complete system on task outcome, reliability, latency, and cost rather than treating imitation as proof of transferred reasoning.
+
+[Chapter 42](42-limits-and-open-questions.qmd) closes Part V with reward hacking, trace faithfulness, verification gaps, benchmark overfitting, and unresolved questions about reasoning evaluation.
+
+## Looking ahead
+
+Distillation changes the cost and observability of a reasoning system without removing the need to evaluate its resulting behaviour. [Chapter 42](42-limits-and-open-questions.qmd) brings together the limits of proxy rewards, verifiers, search, evidence, and deployment claims.
+
+## Further reading
+
+Classical knowledge distillation is introduced by @hinton2015distilling. Reasoning-model distillation should be assessed with the outcome and process distinctions developed in Chapters 35–40.

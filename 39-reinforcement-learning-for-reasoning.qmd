@@ -1,0 +1,244 @@
+---
+title: "Reinforcement Learning for Reasoning"
+subtitle: "Rewards, rollouts, trajectories, and outcome versus process supervision"
+---
+
+## Chapter orientation
+
+### Why this chapter matters
+
+Chapters 37 and 38 allocated additional computation after training. Reinforcement learning for reasoning changes the policy so that it is more likely to generate trajectories associated with a reward. A rollout is a sampled sequence of actions or tokens; a reward evaluates an outcome, a process, or both; a policy update changes probabilities in response to those signals.
+
+The reward does not become the task merely because it is optimised. A verifiable final answer can provide a strong outcome signal for some tasks. A process reward can identify local errors or encourage useful steps, while also rewarding a style that looks correct to its judge. This chapter establishes the objects needed for Chapter 40's group-relative methods.
+
+### Learning objectives
+
+By the end of this chapter, you should be able to:
+
+- define policy, rollout, trajectory, reward, and return;
+- distinguish outcome and process rewards;
+- calculate a toy expected reward and policy-gradient weight;
+- identify reward-model, verifier, and exploration limitations;
+- explain credit assignment across a multi-step trajectory; and
+- specify an RL-for-reasoning run record.
+
+### Running rollout
+
+A policy samples a multi-step solution. An exact answer checker supplies an outcome reward; a separate process scorer may assign values to individual steps.
+
+```{python}
+#| label: fig-rl-reasoning-loop
+#| fig-cap: "An RL-for-reasoning loop samples rollouts, evaluates rewards, estimates an update signal, and changes the policy that generates later trajectories."
+#| fig-alt: "Policy, rollout, verifier or reward, update signal, and updated policy form a directed loop."
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle, FancyArrowPatch
+plt.style.use("seaborn-v0_8-whitegrid")
+blue,teal,orange,purple,grey="#24527a","#3a9188","#d97745","#7655a6","#5f6b76"
+fig,ax=plt.subplots(figsize=(9,3.5)); ax.axis("off")
+for x,label,c in [(.3,"policy",blue),(2.0,"rollout\ntrajectory",teal),(3.95,"reward or\nverifier",orange),(5.9,"update\nsignal",purple)]: ax.add_patch(Rectangle((x,1.3),1.4,.62,facecolor=c,edgecolor="white")); ax.text(x+.7,1.61,label,ha="center",va="center",color="white",fontsize=9)
+for x in [1.73,3.73,5.68]: ax.add_patch(FancyArrowPatch((x,1.61),(x+.22,1.61),arrowstyle="-|>",color=grey,mutation_scale=11))
+ax.add_patch(FancyArrowPatch((6.6,1.28),(.95,.92),connectionstyle="arc3,rad=.25",arrowstyle="-|>",color=purple,mutation_scale=11)); ax.text(4.4,.45,"new rollouts are sampled from the updated policy",ha="center",color=grey); ax.set_xlim(0,7.8); ax.set_ylim(.2,2.3); plt.show()
+```
+
+::: {.concept-box .concept-core #concept-reinforcement-learning data-term="Reinforcement learning for reasoning" data-domain="Reasoning models"}
+**Reinforcement learning for reasoning.** Training a policy from rewards assigned to sampled rollouts or trajectories. The reward, action boundary, rollout distribution, and policy constraint define what the update can learn.
+:::
+
+::: {.concept-box .concept-distinction #concept-outcome-process-supervision data-term="Outcome reward and process supervision" data-domain="Reasoning models"}
+**Outcome reward and process supervision.** Outcome reward scores the completed result. Process supervision scores intermediate steps. The first can miss where an error arose; the second depends on a reliable step-level evaluator.
+:::
+
+## Level 1 - Intuition
+
+### Rewards select among sampled behaviours
+
+If a task has an exact answer, a verifier can reward a rollout that reaches it and reject one that does not. The policy update increases probability for rewarded trajectories relative to alternatives under the chosen algorithm. For open-ended tasks, a reward may be learned from preferences or process annotations, which introduces the limits of the judge described in Chapter 30.
+
+```{python}
+rollouts=[{"steps":3,"correct":1,"reward":1.0},{"steps":5,"correct":0,"reward":0.0},{"steps":4,"correct":1,"reward":1.0}]
+print("mean outcome reward:",np.mean([r["reward"] for r in rollouts]))
+```
+
+### The reward interface defines which trajectories are eligible to learn from
+
+Before optimisation, specify the task input, the permitted actions, the end condition, the reward source, and what happens when a rollout is malformed, incomplete, unsafe, or impossible to verify. An exact checker may return a binary reward only for answers that parse; a tool-based task may need to distinguish a failed call from an incorrect result; a human or model judge may return a score with uncertainty. These cases are part of the training data distribution, not implementation noise to discard without a rule.
+
+The interface also determines which shortcuts the policy can use. If a reward checks only a final number, a trajectory may contain irrelevant or invalid intermediate statements and still receive reward. If a process scorer rewards a preferred format, the policy may learn the format without improving the task. A useful reward specification names the intended property, the observed proxy, the cases the proxy cannot evaluate, and the fallback for those cases.
+
+Outcome rewards evaluate the final state. They can tolerate unusual valid solution paths, but provide little information about where a failed trajectory went wrong. Process rewards score intermediate steps. They can give denser feedback, but require a process evaluator whose judgements are valid for the task.
+
+```{python}
+#| label: fig-outcome-process-reward
+#| fig-cap: "Outcome rewards score a completed answer, while process rewards attach feedback to intermediate steps; each exposes different credit-assignment and judging risks."
+#| fig-alt: "A three-step trajectory has small process rewards on each step and a final outcome reward at the answer."
+fig,ax=plt.subplots(figsize=(8,3.2)); ax.axis("off")
+for i in range(3): ax.add_patch(Rectangle((.45+i*2.1,1.5),1.5,.48,facecolor=teal,edgecolor="white")); ax.text(1.2+i*2.1,1.74,f"step {i+1}",ha="center",va="center",color="white"); ax.text(1.2+i*2.1,1.15,"process score",ha="center",color=orange,fontsize=8)
+ax.text(6.7,1.74,"final answer",ha="center",color=purple); ax.text(6.7,1.15,"outcome reward",ha="center",color=purple,fontsize=8); ax.set_xlim(0,8); ax.set_ylim(.6,2.4); plt.show()
+```
+
+### Outcome and process signals need a disagreement analysis
+
+When outcome and process scores disagree, the disagreement is evidence about the evaluators as well as the trajectory. A correct final answer with a low process score may reflect an unusual valid route, incomplete annotations, or a weak process judge. A high process score with an incorrect answer may reveal a plausible-looking but invalid step that the evaluator rewarded. Record these cases by task type and inspect a bounded sample before treating either signal as the authoritative account of quality.
+
+Process supervision can provide more frequent feedback, but its advantage depends on the validity and coverage of the step evaluator. Research comparing process and outcome supervision therefore concerns a defined task and judging procedure, not a universal guarantee that visible intermediate steps represent the policy's causal computation [@lightman2023lets].
+
+## Level 2 - Objective mechanics
+
+### Policy gradients weight sampled actions by return
+
+For a trajectory \(\tau\) sampled from policy \(\pi_\theta\), a basic policy-gradient estimator increases log probability in proportion to return \(R(\tau)\): \(R(\tau)\nabla_\theta\log\pi_\theta(\tau)\). In practice a baseline or advantage reduces variance by comparing the return with an expected value. The update does not copy a rewarded sequence exactly; it changes the distribution from which future trajectories are sampled.
+
+```{python}
+rewards=np.array([1.,0.,1.,0.]); baseline=rewards.mean(); advantages=rewards-baseline
+print("baseline:",baseline,"advantages:",advantages)
+```
+
+### Returns require scale and reference choices
+
+The numerical scale of a reward changes the magnitude and variance of an update. A sparse binary reward, a graded verifier score, and a sum of process scores create different learning signals even when they refer to the same task. Clipping, normalising, discounting, or subtracting a baseline can stabilise estimation, but each transformation changes which trajectory differences the update emphasises. Report the transformation and its unit alongside the raw reward distribution.
+
+The policy also needs a reference point. Without a constraint, repeated updates can shift the model away from useful instruction-following, formatting, or safety behaviour that the reward does not measure. A KL penalty or another reference-policy control makes that trade-off explicit. The relevant question is not whether the policy changed, but whether the measured reasoning gain remains after accounting for changes in the behaviours that the reward left unscored. Standard reinforcement-learning accounts distinguish the return signal, variance-reduction estimate, and policy update for this reason [@sutton2018reinforcement].
+
+Credit assignment asks which earlier decisions contributed to a final reward. Assigning one outcome reward to every token can reinforce accidental or irrelevant steps. Process labels can localise credit, but only where the process scorer can distinguish a valid from invalid step. This is a measurement problem, not merely an optimisation detail.
+
+```{python}
+#| label: fig-credit-assignment
+#| fig-cap: "A final outcome reward must be assigned across earlier trajectory decisions; process feedback can localise signals but depends on the process evaluator."
+#| fig-alt: "Four action tokens lead to one final reward, with arrows back to all actions and optional process labels beneath individual actions."
+fig,ax=plt.subplots(figsize=(8,3.4)); ax.axis("off")
+for i in range(4): ax.add_patch(Rectangle((.35+i*1.35,1.6),.9,.42,facecolor=blue,edgecolor="white")); ax.text(.8+i*1.35,1.81,f"a{i+1}",ha="center",va="center",color="white")
+ax.add_patch(Rectangle((5.9,1.6),1.1,.42,facecolor=orange,edgecolor="white")); ax.text(6.45,1.81,"reward",ha="center",va="center",color="white"); ax.text(3.6,.75,"Which actions deserve credit is an estimator and evaluator question.",ha="center",color=grey); ax.set_xlim(0,7.5); ax.set_ylim(.3,2.5); plt.show()
+```
+
+### Credit assignment should not rewrite the trajectory record
+
+An update may attach the same return to every action, assign different weights to time steps, or use process labels for selected states. Keep the original trajectory separate from the credit signal derived from it. Otherwise a later analysis cannot tell whether a step was observed, judged, or inferred by the advantage estimator. This matters when a correct answer follows an invalid intermediate claim: outcome reward confirms the final result, while a process label may identify the earlier error.
+
+Credit assignment also has an eligibility boundary. A trajectory generated under one prompt template, tool version, or answer parser may not be comparable with a trajectory generated under another. Mixing them without a record changes the reward distribution and can make an apparent training gain reflect a changed interface. The rollout log should therefore bind each action sequence to its prompt, tools, reward version, and termination reason before an update is calculated.
+
+## Level 3 - Exploration and reward limits
+
+### A reward can be exploited
+
+Optimisation searches for trajectories that obtain high reward, including behaviours that satisfy a proxy without meeting the intended task. A verifier may accept a formatting loophole; a learned reward may prefer confident language or a familiar process style. Fresh tasks, adversarial cases, reward-model diagnostics, and independent outcome checks are needed throughout training.
+
+```{python}
+cases=[{"trajectory":"correct solution","reward":1,"task_success":1},{"trajectory":"format exploit","reward":1,"task_success":0}]
+for case in cases: print(case)
+```
+
+Exploration determines which trajectories the reward can evaluate. A policy that rarely samples a correct long solution cannot learn from its reward without a curriculum, a stronger starting policy, broader sampling, or another source of demonstrations. More exploration raises rollout cost and can generate unsafe or low-quality candidates, so its policy must be bounded and logged.
+
+Exploration should be diagnosed before it is credited with learning. Separate the share of rollouts that are novel, verifier-accepted, duplicate a previous answer, malformed, or stopped by a budget. A rise in average reward can come from repeatedly sampling one already common trajectory. Conversely, a policy may explore widely but supply no usable reward signal if the verifier rejects nearly every candidate.
+
+### Rollout collection is a data-generation process
+
+Rollouts are generated data, not a neutral sample from a fixed corpus. Their distribution depends on the current policy, prompt mix, decoding settings, tool availability, filters, and retry policy. If a training run keeps only accepted trajectories, the retained set can conceal how many candidates were invalid, duplicated, or rejected by a narrow verifier. Retaining only successful samples may be appropriate for a defined objective, but it must be recorded as a selection rule.
+
+Separate the policy that generated a rollout from the policy being updated. A stale rollout pool can improve throughput, but it may no longer represent the current policy's behaviour; an on-policy pool is more current but requires repeated generation. This chapter does not require one choice. It requires naming the choice, recording the policy version and sampling conditions, and evaluating the resulting policy on held-out tasks rather than on the filtered rollout pool.
+
+```{python}
+#| label: fig-exploration-coverage
+#| fig-cap: "An exploration audit separates useful accepted rollouts from duplicates, malformed outputs, and unverified candidates before attributing a policy change to learning."
+#| fig-alt: "A stacked bar chart shows the composition of rollouts at low and high sampling temperatures: accepted, incorrect, duplicate, and malformed."
+labels=["lower\ntemperature","higher\ntemperature"]
+parts=np.array([[48,35,14,3],[37,42,13,8]])
+colours=[teal,orange,purple,grey]; names=["accepted","incorrect","duplicate","malformed"]
+fig,ax=plt.subplots(figsize=(7,4)); bottom=np.zeros(2)
+for values,colour,name in zip(parts.T,colours,names):
+    ax.bar(labels,values,bottom=bottom,label=name,color=colour); bottom+=values
+ax.set_ylabel("share of rollouts (%)"); ax.set_ylim(0,100); ax.legend(ncol=2)
+ax.set_title("Illustrative rollout composition")
+plt.tight_layout(); plt.show()
+```
+
+### Reward failures need a response policy during training
+
+Training should specify how it handles a verifier outage, contradictory tool output, a suspected exploit, a high rate of malformed trajectories, or a sudden increase in reward without an independent outcome gain. Possible responses include pausing updates, excluding a versioned batch, reducing exploration, routing cases for review, or reverting to an earlier checkpoint. These are governance decisions around a training signal, not evidence that the policy has learned less.
+
+The response record should identify the triggering measurement and the affected trajectories. Quietly changing a reward threshold or deleting inconvenient rollouts destroys the comparison across checkpoints. A bounded, versioned intervention preserves the possibility of diagnosing whether later behaviour changed because of the policy update or because the training signal changed.
+
+## Level 4 - Audit and reporting
+
+### Compare the policy to its reward and its task
+
+An RL evaluation should report reward during training, independent task outcome, selected trajectory length, token and rollout budgets, verifier or judge version, reward-hacking cases, and retained capability tests. A rising training reward with flat task accuracy is a diagnostic signal, not a success criterion. The comparison should include the pre-RL reference policy under the same inference procedure.
+
+The evaluation set and verifier version must remain fixed across checkpoints. Otherwise a policy may seem to improve because a reward implementation, prompt template, decoding temperature, or test composition changed. Report checkpoint-level uncertainty or task slices where sample sizes permit. The purpose is to identify the source of the observed change, not to turn a training curve into a broad capability claim.
+
+### Checkpoint selection needs an independent criterion
+
+Selecting the checkpoint with the highest training reward selects for the training signal by construction. Select on a held-out task metric, a predeclared composite of task and resource measures, or a fixed training budget, then report the alternative checkpoints and their outcomes. If the task requires safeguards or retained capabilities, include those tests in the selection rule or state explicitly that they are constraints rather than optimisation targets.
+
+Compare the selected policy with the reference policy under matched inference conditions. A post-training policy that receives more samples, a stronger tool, or a different prompt at evaluation cannot be attributed to reinforcement learning alone. The evaluation record should allow a reader to reproduce both the checkpoint decision and the policy comparison.
+
+```{python}
+#| label: fig-reward-outcome-divergence
+#| fig-cap: "Training reward and independently scored task accuracy can move differently; both must be shown across comparable policy checkpoints."
+#| fig-alt: "A line chart plots rising training reward and nearly flat held-out task accuracy over five illustrative checkpoints."
+checkpoints=np.arange(1,6); reward=[.42,.55,.66,.74,.79]; task=[.51,.52,.54,.53,.55]
+fig,ax=plt.subplots(figsize=(7,4)); ax.plot(checkpoints,reward,marker="o",label="training reward",color=orange)
+ax.plot(checkpoints,task,marker="o",label="held-out task accuracy",color=blue)
+ax.set_xlabel("checkpoint"); ax.set_ylabel("score"); ax.set_ylim(.35,.85); ax.legend()
+ax.set_title("Illustrative reward-outcome divergence")
+plt.tight_layout(); plt.show()
+```
+
+```{python}
+history={"before":{"reward":.42,"task":.51},"after":{"reward":.78,"task":.55}}
+print(history)
+```
+
+### The run record defines the policy change
+
+Store base policy, rollout prompt and template, sampling settings, reward or verifier implementation, outcome and process labels, baseline or advantage method, update schedule, KL or reference constraint where used, checkpoints, independent evaluations, and cost. This allows a reviewer to distinguish a model improvement from a changed reward, a changed sampler, or a changed benchmark.
+
+Include the rejected and interrupted portions of the run: rollout counts before filtering, reward and parser failures, policy and tool versions, aborted updates, and the reason for each intervention. This establishes the training distribution actually used by the optimiser and makes later reward-hacking or regression findings traceable to a specific run condition.
+
+```{python}
+record={"base":"instruction-v1","rollouts":8,"reward":"exact verifier","advantage":"baseline-subtracted","evaluation":"held-out outcome"}
+assert {"base","reward","advantage","evaluation"} <= set(record)
+print("RL reasoning record complete")
+```
+
+## Common misconceptions
+
+- **A reward is the task definition.** It is a signal that can be incomplete or exploited.
+- **Outcome rewards show a good process.** Correct answers can arise through poor or lucky trajectories.
+- **Process rewards are automatically more faithful.** Their quality depends on the process evaluator.
+- **More rollouts always improve a policy update.** They change cost and can repeat a weak exploration distribution.
+- **A rising reward proves general reasoning improvement.** Independent task and robustness tests remain necessary.
+
+## Exercises
+
+1. Define policy, rollout, trajectory, reward, and return.
+2. Compare outcome and process rewards on a checkable task.
+3. Calculate advantages from a set of rewards and a mean baseline.
+4. Construct a reward-hacking example.
+5. Explain one credit-assignment problem in a long trajectory.
+6. Design a verifier for a constrained output and name its blind spot.
+7. State why exploration matters for sparse outcome reward.
+8. Specify an independent evaluation after RL training.
+9. Compare pre-RL and post-RL policies under equal inference budgets.
+10. List fields required in an RL reasoning record.
+11. Identify a process-evaluator disagreement case.
+12. Explain why higher reward can coexist with flat task accuracy.
+13. Propose an abort criterion for unsafe rollout behaviour.
+14. State what Chapter 40 adds to a basic advantage calculation.
+15. Define a retained capability test after RL.
+16. Explain why reward versioning matters.
+
+## Summary
+
+Reinforcement learning for reasoning changes a policy through rewards assigned to sampled trajectories. Outcome and process supervision offer different feedback and different failure modes. The quality of the resulting system depends on exploration, reward validity, credit assignment, reference constraints, and independent task evaluation.
+
+[Chapter 40](40-grpo-and-related-training-methods.qmd) develops group-relative advantages and related policy-update choices for reasoning rollouts.
+
+## Looking ahead
+
+Reinforcement learning requires a policy objective, sampled trajectories, and a feedback signal. [Chapter 40](40-grpo-and-related-training-methods.qmd) examines GRPO's group-relative construction and the specific rollout and reward assumptions it adds.
+
+## Further reading
+
+Outcome and process supervision are compared by @lightman2023lets. Reinforcement learning foundations are presented by @sutton2018reinforcement.

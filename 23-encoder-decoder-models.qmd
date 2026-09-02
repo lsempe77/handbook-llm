@@ -1,0 +1,327 @@
+---
+title: "Encoders, Decoders, and Encoder-Decoder Models"
+subtitle: "Transformer families defined by information flow"
+---
+
+## Chapter orientation
+
+### Why this chapter matters
+
+A Transformer block is a computational unit, not a complete model family. The same block can be arranged so that every input position sees the whole input, so that each output position sees only an earlier prefix, or so that one sequence is encoded before another sequence retrieves from it. These choices define encoder-only, decoder-only, and encoder-decoder models.
+
+The distinction follows from information flow rather than from a brand name. It determines the masks, the available context at each representation, the usual output interface, and the work performed during generation. This chapter uses small tensor examples to compare the three configurations. Tokenisation and detailed language-model objectives are deferred to Chapters 24 and 25.
+
+### Learning objectives
+
+By the end of this chapter, you should be able to:
+
+- distinguish encoder-only, decoder-only, and encoder-decoder Transformer configurations;
+- state the self-attention eligibility rule in each component;
+- explain cross-attention as target queries retrieving from encoded source keys and values;
+- identify the source and target axes in a sequence-to-sequence model;
+- describe which outputs can be computed in parallel and which require autoregressive steps;
+- implement and test a small encoder-decoder information-flow skeleton;
+- match a model family to a stated representation, generation, or conditional-generation requirement; and
+- report the architecture and masking choices needed to reproduce a model result.
+
+### Running example
+
+Let a source sequence have four representations, $X^{src}\in\mathbb{R}^{B\times4\times D}$, and a target prefix have three, $X^{tgt}\in\mathbb{R}^{B\times3\times D}$. An encoder produces four contextual source representations. A decoder produces three target representations, each constrained to its own earlier target positions but able to retrieve from all valid source positions through cross-attention.
+
+```{python}
+#| label: fig-model-families
+#| fig-cap: "Encoder-only, decoder-only, and encoder-decoder Transformers differ in which sequences exist and in the attention paths that connect them."
+#| fig-alt: "Three side-by-side diagrams show one bidirectional encoder stack, one causal decoder stack, and an encoder stack connected to a causal decoder stack by cross-attention arrows."
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle, FancyArrowPatch
+
+plt.style.use("seaborn-v0_8-whitegrid")
+blue, teal, orange, purple, grey = "#24527a", "#3a9188", "#d97745", "#7655a6", "#5f6b76"
+fig,axes=plt.subplots(1,3,figsize=(12,4.2))
+for ax,title in zip(axes,["encoder-only","decoder-only","encoder-decoder"]): ax.axis("off"); ax.set_title(title,fontsize=12)
+for i in range(4):
+    axes[0].add_patch(Rectangle((.45+i*.76,.45),.56,.42,facecolor=blue,edgecolor="white")); axes[0].text(.73+i*.76,.66,f"x{i+1}",ha="center",va="center",color="white",fontsize=8)
+axes[0].add_patch(Rectangle((.55,1.35),2.55,.62,facecolor=teal,edgecolor="white")); axes[0].text(1.83,1.66,"bidirectional encoder blocks",ha="center",va="center",color="white",fontsize=9)
+axes[0].text(1.83,2.35,"contextual representations",ha="center",color=grey)
+for i in range(4):
+    axes[1].add_patch(Rectangle((.45+i*.76,.45),.56,.42,facecolor=orange,edgecolor="white")); axes[1].text(.73+i*.76,.66,f"y{i+1}",ha="center",va="center",color="white",fontsize=8)
+axes[1].add_patch(Rectangle((.55,1.35),2.55,.62,facecolor=purple,edgecolor="white")); axes[1].text(1.83,1.66,"causal decoder blocks",ha="center",va="center",color="white",fontsize=9)
+axes[1].text(1.83,2.35,"next-position representations",ha="center",color=grey)
+for i in range(3):
+    axes[2].add_patch(Rectangle((.2+i*.55,.45),.42,.38,facecolor=blue,edgecolor="white")); axes[2].text(.41+i*.55,.64,f"s{i+1}",ha="center",va="center",color="white",fontsize=7)
+axes[2].add_patch(Rectangle((.2,1.25),1.55,.58,facecolor=teal,edgecolor="white")); axes[2].text(.98,1.54,"encoder",ha="center",va="center",color="white")
+for i in range(3):
+    axes[2].add_patch(Rectangle((2.2+i*.55,.45),.42,.38,facecolor=orange,edgecolor="white")); axes[2].text(2.41+i*.55,.64,f"t{i+1}",ha="center",va="center",color="white",fontsize=7)
+axes[2].add_patch(Rectangle((2.15,1.25),1.55,.58,facecolor=purple,edgecolor="white")); axes[2].text(2.93,1.54,"causal decoder",ha="center",va="center",color="white")
+axes[2].add_patch(FancyArrowPatch((1.0,1.86),(2.9,1.86),arrowstyle="-|>",mutation_scale=12,color=orange)); axes[2].text(1.95,2.12,"cross-attention",ha="center",color=orange,fontsize=9)
+for ax in axes: ax.set_xlim(0,4.1); ax.set_ylim(.1,2.65)
+plt.tight_layout(); plt.show()
+```
+
+::: {.concept-box .concept-core #concept-transformer-family data-term="Encoder, decoder, and encoder-decoder model" data-domain="Representations and Transformers"}
+**Encoder, decoder, and encoder-decoder model.** An encoder represents an available input with bidirectional access. A decoder generates causally from a prefix. An encoder-decoder model represents a source then generates a target through cross-attention.
+:::
+
+## Level 1 - Intuition
+
+### Encoders produce context-aware representations
+
+An encoder-only model applies unmasked self-attention to an input sequence. A representation at one position can use content on both its left and right, subject to padding and any task-specific restrictions. The usual result is a contextual representation for every input position, followed by a task-specific head for classification, tagging, retrieval, or another prediction.
+
+This arrangement fits tasks where the full input is available before the output is required. It is not a direct left-to-right generator because its representations can use later input content. BERT is a prominent encoder-only pretraining design built around bidirectional conditioning [@devlin2019bert].
+
+### Decoders represent prefixes and generate conditionally on them
+
+A decoder-only model applies causal self-attention. Position $t$ may retrieve from positions at or before $t$, but not future positions. Its output at each location can therefore be used to parameterise a prediction about the next position without accessing information that would be unavailable during generation.
+
+At training time, representations for a supplied sequence can often be computed in parallel under a triangular mask. At inference time, the next generated item changes the prefix, so decoding proceeds step by step. The mask defines the information boundary; the token-level prediction objective will be derived in Chapter 25.
+
+### Encoder-decoder models separate source understanding from target generation
+
+An encoder-decoder model has two sequences with different roles. The encoder reads the full source. The decoder reads an autoregressive target prefix. Cross-attention then lets each target position retrieve from the encoded source. This is useful when the output is a new sequence conditioned on an input sequence, as in translation, summarisation, or structured generation.
+
+```{python}
+#| label: fig-information-boundaries
+#| fig-cap: "The three families use different attention eligibility: encoder self-attention is bidirectional, decoder self-attention is causal, and decoder cross-attention can access valid encoded source positions."
+#| fig-alt: "Three small matrices show all cells allowed for an encoder, lower-triangular cells allowed for a decoder, and all cells allowed in a target-query by source-key cross-attention matrix."
+fig,axes=plt.subplots(1,3,figsize=(10.5,3.4))
+mats=[np.ones((4,4)),np.tril(np.ones((4,4))),np.ones((3,4))]
+titles=["encoder self-attention","decoder self-attention","cross-attention"]
+for ax,mat,title in zip(axes,mats,titles):
+    ax.imshow(mat,cmap="YlGnBu",vmin=0,vmax=1); ax.set_title(title,fontsize=10); ax.set_xlabel("key positions"); ax.set_ylabel("query positions")
+    for i in range(mat.shape[0]):
+        for j in range(mat.shape[1]): ax.text(j,i,"use" if mat[i,j] else "block",ha="center",va="center",fontsize=7,color="white" if mat[i,j] else "black")
+plt.tight_layout(); plt.show()
+```
+
+The cross-attention matrix is rectangular because target queries and source keys may have different lengths. It is not a second causal mask: source availability is usually controlled by source padding and by the boundary defining the input, while target self-attention preserves the autoregressive restriction.
+
+Level 1 identifies the three information patterns. Level 2 follows the tensors and masks through them.
+
+## Level 2 - Mechanics
+
+### Encoder-only stacks use one sequence throughout
+
+Starting from input representations $X\in\mathbb{R}^{B\times S\times D}$, an encoder stack applies blocks whose self-attention keys and values come from the same $X$-derived sequence. With valid-token mask $M$, every valid query can attend to every valid key. The final sequence $H^{enc}\in\mathbb{R}^{B\times S\times D}$ can support token-level outputs or be pooled into a sequence-level representation under a stated pooling rule.
+
+Pooling is a model decision, not an inevitable property of encoders. Mean pooling, a selected special-position representation, and learned attention pooling produce different output functions and handle padding differently. A report should identify which representation was sent to the prediction head.
+
+### Decoder-only stacks preserve a growing prefix
+
+For target representations $Y\in\mathbb{R}^{B\times T\times D}$, a causal decoder block uses a triangular target self-attention mask. At position $t$, the block can use target positions $0,\ldots,t$. During cached inference, earlier projected keys and values can be retained, while the new query uses the correct global positional offset from Chapter 21.
+
+Training and inference use the same causal information rule but different inputs. During teacher-forced training, the observed earlier target items form the prefix at every position, making the full shifted target sequence available for parallel masked computation. During generation, the model's own selected earlier items form the prefix and each new selection changes the next input. A reported training loss therefore does not by itself measure errors accumulated during a long generated sequence.
+
+```{python}
+def causal_eligibility(length):
+    return np.tril(np.ones((length,length),dtype=bool))
+def cross_eligibility(target_length,source_valid):
+    return np.broadcast_to(np.asarray(source_valid,dtype=bool),(target_length,len(source_valid)))
+
+print("decoder eligibility at target position 2:",causal_eligibility(4)[2].astype(int))
+print("cross-attention with one padded source key:\n",cross_eligibility(3,[True,True,False,True]).astype(int))
+```
+
+The causal mask applies across target positions. The source-valid mask applies across source keys for every target query. Combining them as if source and target were the same axis is a common cross-attention bug.
+
+### Encoder-decoder blocks add cross-attention between two sequences
+
+Let $H^{enc}\in\mathbb{R}^{B\times S\times D}$ be the final encoded source and $H^{dec}\in\mathbb{R}^{B\times T\times D}$ the current decoder representation. A decoder cross-attention sublayer constructs queries from the decoder and keys and values from the encoder:
+
+$$Q=H^{dec}W_Q,\qquad K=H^{enc}W_K,\qquad V=H^{enc}W_V,$$
+
+$$C=\operatorname{softmax}\left(\frac{QK^\top}{\sqrt{D_k}}+M_{src}\right)V.$$
+
+The score tensor has shape $B\times H\times T\times S$ after head splitting. Its rows correspond to target queries and columns to source keys. Cross-attention is therefore the query-key-value operation from Chapter 19 with source and target axes kept separate.
+
+```{python}
+#| label: fig-source-target-axes
+#| fig-cap: "Cross-attention has a target-query axis and a source-key axis; their lengths can differ and their masks serve different purposes."
+#| fig-alt: "A rectangular three-by-four heatmap labels its rows target queries t1 through t3 and columns source keys s1 through s4, with one source column marked padded."
+cross_mask=np.array([[1,1,0,1],[1,1,0,1],[1,1,0,1]])
+fig,ax=plt.subplots(figsize=(6.6,3.9)); ax.imshow(cross_mask,cmap="YlGnBu",vmin=0,vmax=1)
+for i in range(3):
+    for j in range(4): ax.text(j,i,"valid" if cross_mask[i,j] else "padded",ha="center",va="center",fontsize=9,color="white" if cross_mask[i,j] else "black")
+ax.set_xticks(range(4),["s1","s2","s3","s4"]); ax.set_yticks(range(3),["t1","t2","t3"]); ax.set_xlabel("source keys and values"); ax.set_ylabel("target queries"); ax.set_title("Rectangular cross-attention eligibility"); plt.tight_layout(); plt.show()
+```
+
+The source encoding may be reused at each decoder step, but its padding mask must be reused with it. If a request batch packs sources of different length, the cross-attention mask is not optional metadata: it defines which memory locations are data and which are fill values.
+
+```{python}
+source=np.array([[1.,.2],[.8,.5],[.1,.9],[.4,.3]])
+target=np.array([[.6,.1],[.2,.7],[.5,.4]])
+scores=target@source.T/np.sqrt(2)
+source_valid=np.array([True,True,False,True]); masked=np.where(source_valid[None,:],scores,-np.inf)
+weights=np.exp(masked-masked.max(axis=1,keepdims=True)); weights/=weights.sum(axis=1,keepdims=True)
+context=weights@source
+print("scores, weights, context:",scores.shape,weights.shape,context.shape)
+print("padded source mass:",weights[:,2].sum())
+```
+
+The target length is three and source length four, so the score matrix is three by four. Every target query has zero weight on the padded source position after masking. This check belongs alongside output-quality metrics because a wrong source mask can make a model appear to work while using padding artefacts.
+
+Level 2 has separated the model-family data paths. Level 3 states the associated conditional distributions and implements their mask contracts.
+
+## Level 3 - Mathematics & Code
+
+### Output factorisation follows the information boundary
+
+For a decoder-only sequence $y_1,\ldots,y_T$, causal conditioning yields the factorisation
+
+$$p(y_{1:T})=\prod_{t=1}^{T}p(y_t\mid y_{<t}).$$
+
+For conditional generation given a source $x_{1:S}$, an encoder-decoder model uses
+
+$$p(y_{1:T}\mid x_{1:S})=\prod_{t=1}^{T}p(y_t\mid y_{<t},x_{1:S}).$$
+
+The equations state available information, not the vocabulary or loss implementation. A decoder-only model may receive a prompt as part of its prefix; an encoder-decoder model separates the conditioning source and generated target through separate streams and cross-attention.
+
+```{python}
+import torch
+from torch import nn
+
+torch.manual_seed(23)
+source=torch.randn(2,4,8); target=torch.randn(2,3,8)
+cross=nn.MultiheadAttention(8,2,batch_first=True,dropout=0.0)
+source_padding=torch.tensor([[False,False,True,False],[False,False,False,False]])
+context,weights=cross(target,source,source,key_padding_mask=source_padding,need_weights=True,average_attn_weights=False)
+print("context shape:",tuple(context.shape))
+print("weights shape:",tuple(weights.shape))
+print("masked source mass:",weights[0,:,:,2].sum().item())
+```
+
+The `key_padding_mask` is defined on source keys. The target queries remain present; a separate target padding policy is required if the target batch also contains padded queries. Frameworks differ on whether `True` means ignore or allow, so a hand-checked test is preferable to assuming a convention.
+
+### A minimal encoder-decoder skeleton exposes the two masks
+
+```{python}
+class TinyEncoderDecoder(nn.Module):
+    def __init__(self,width=8,heads=2,ff_width=16):
+        super().__init__()
+        self.encoder=nn.TransformerEncoderLayer(width,heads,ff_width,batch_first=True,dropout=0.0,norm_first=True)
+        self.decoder=nn.TransformerDecoderLayer(width,heads,ff_width,batch_first=True,dropout=0.0,norm_first=True)
+    def forward(self,source,target,source_padding=None,target_padding=None):
+        memory=self.encoder(source,src_key_padding_mask=source_padding)
+        t=target.shape[1]; target_causal=torch.triu(torch.ones(t,t,device=target.device,dtype=torch.bool),diagonal=1)
+        return self.decoder(target,memory,tgt_mask=target_causal,memory_key_padding_mask=source_padding,tgt_key_padding_mask=target_padding)
+
+model=TinyEncoderDecoder().eval(); source=torch.randn(1,4,8); target=torch.randn(1,3,8)
+source_padding=torch.tensor([[False,False,False,True]])
+out=model(source,target,source_padding=source_padding)
+print("encoder-decoder output:",tuple(out.shape))
+```
+
+The encoder processes source representations once in this minimal forward pass. The decoder's `tgt_mask` prevents future target access; `memory_key_padding_mask` prevents access to padded source positions. The source encoder and target decoder can have different sequence lengths while retaining the same model width for cross-attention.
+
+### Perturbation tests distinguish source from future target information
+
+```{python}
+changed_future=target.clone(); changed_future[:,2]+=100
+base=model(source,target,source_padding=source_padding); future_changed=model(source,changed_future,source_padding=source_padding)
+changed_source=source.clone(); changed_source[:,0]+=100
+source_changed=model(changed_source,target,source_padding=source_padding)
+print("earlier target outputs unchanged by future target:",torch.allclose(base[:,:2],future_changed[:,:2],atol=1e-6))
+print("target output can change when valid source changes:",not torch.allclose(base,source_changed))
+```
+
+The two tests express different contracts. Causal target self-attention prevents a future target perturbation from affecting earlier output positions. Cross-attention permits a valid source perturbation to affect target representations. A model that passes only one of these tests has not established the complete encoder-decoder information boundary.
+
+The tests use random untrained parameters, so the magnitude or direction of the source effect has no semantic interpretation. Their purpose is architectural: a permitted input path exists, and a prohibited future-target path does not. A trained system requires additional tests for output-head alignment, tokenizer boundaries, and the evaluation data pipeline.
+
+## Level 4 - Research & Systems
+
+### Architecture choice depends on the output contract
+
+Encoder-only models are appropriate when the output is a representation or a prediction available after reading a complete input. Decoder-only models support left-to-right generation from a prefix. Encoder-decoder models make a source-target distinction explicit and can encode a source once while a target decoder repeatedly retrieves from it. These are general architectural consequences, not exclusive task assignments: a model family can be adapted to tasks beyond its most common examples.
+
+The choice affects serving as well as modelling. An encoder-only retrieval or classification service can batch complete inputs and return outputs after a forward pass. A decoder-only service maintains a growing prefix and usually schedules sequential token steps across active requests. An encoder-decoder service has a source-encoding stage followed by target decoding, with source memory retained for the request. The appropriate design depends on the output contract, expected source and target lengths, latency requirements, and the available supervision.
+
+BERT exemplifies bidirectional encoder representations [@devlin2019bert]. T5 uses an encoder-decoder text-to-text framework [@raffel2020t5], and BART pre-trains a sequence-to-sequence architecture through denoising [@lewis2020bart]. The examples establish that the families are used in practice; they do not imply that pretraining objective, data, scale, or evaluation can be inferred from the architecture alone.
+
+```{python}
+#| label: fig-generation-work
+#| fig-cap: "Encoder-only representations can be computed after the input is available; autoregressive decoders require sequential target steps, while an encoder-decoder can reuse encoded source memory across those steps."
+#| fig-alt: "A timeline compares one parallel encoder pass, four sequential decoder steps, and one encoder pass followed by four decoder steps that repeatedly reference retained source memory."
+fig,axes=plt.subplots(3,1,figsize=(9.5,4.7),sharex=True)
+rows=[("encoder-only",[0],blue),("decoder-only",[0,1,2,3],orange),("encoder-decoder",[0,1,2,3,4],teal)]
+for ax,(label,steps,colour) in zip(axes,rows):
+    ax.set_yticks([]); ax.set_ylabel(label,rotation=0,labelpad=55,va="center")
+    for step in steps:
+        text="encode source" if label=="encoder-decoder" and step==0 else ("encode input" if label=="encoder-only" else f"decode {step if label=='decoder-only' else step}")
+        ax.barh(0,.75,left=step+.08,color=colour); ax.text(step+.455,0,text,ha="center",va="center",color="white",fontsize=8)
+    if label=="encoder-decoder": ax.text(2.85,.35,"encoded source memory reused",color=grey,ha="center",fontsize=9)
+    ax.set_ylim(-.5,.6); ax.grid(axis="x",alpha=.25)
+axes[-1].set_xlabel("successive inference steps"); axes[-1].set_xticks(range(5),range(1,6)); plt.tight_layout(); plt.show()
+```
+
+### Source encoding and target decoding have separate costs
+
+An encoder-decoder service must account for source encoding, decoder self-attention over an increasing target prefix, cross-attention from each target query to source memory, and the memory retained for cached keys and values. A long source can make cross-attention costly at every decoding step even when the target is short. A long target increases decoder self-attention and cache size. Latency, memory, and throughput depend on both axes, batch composition, decoding strategy, dtype, and kernel implementation.
+
+Model interfaces should also state ownership of special positions, boundary tokens, padding, attention masks, positional offsets, and output-head alignment. Off-by-one target shifts can produce superficially plausible training losses while teaching a decoder to use the wrong target position. Source and target tokenisation may share a vocabulary or differ; the choice belongs to the model specification and is taken up in Chapter 24.
+
+```{python}
+#| label: fig-training-and-generation
+#| fig-cap: "Causal training can score a supplied shifted target sequence in parallel, while generation appends one selected target item before computing the next step."
+#| fig-alt: "The upper timeline shows four shifted target inputs entering one parallel masked decoder pass. The lower timeline shows a prompt followed by three sequential select-and-append steps."
+fig,axes=plt.subplots(2,1,figsize=(9.5,3.8),sharex=True)
+for i in range(4):
+    axes[0].barh(0,.76,left=i+.1,color=purple); axes[0].text(i+.48,0,f"target {i+1}",ha="center",va="center",color="white",fontsize=8)
+axes[0].text(2,.38,"one masked training forward pass",ha="center",color=grey); axes[0].set_ylabel("training",rotation=0,labelpad=42,va="center")
+for i,label in enumerate(["prompt","select 1","select 2","select 3"]):
+    axes[1].barh(0,.76,left=i+.1,color=orange); axes[1].text(i+.48,0,label,ha="center",va="center",color="white",fontsize=8)
+axes[1].set_ylabel("generation",rotation=0,labelpad=42,va="center"); axes[1].set_xlabel("successive decoding steps")
+for ax in axes: ax.set_yticks([]); ax.set_ylim(-.45,.6); ax.set_xticks(range(4),range(1,5)); ax.grid(axis="x",alpha=.25)
+plt.tight_layout(); plt.show()
+```
+
+### Evaluation must respect what the model was allowed to see
+
+A bidirectional encoder evaluation can use the complete input if that input would genuinely be available at the time of prediction. A causal decoder evaluation must not include the reference continuation inside the prompt. Conditional generation must ensure that target-side labels do not enter source features or cached decoder state. These are data and evaluation boundaries as much as mask boundaries.
+
+An audit should record architecture family, number and type of blocks, normalisation convention, position method, source and target length distributions, mask semantics, padding and packing policy, vocabulary interface, target shift, generation settings, cache policy, and evaluation-time input availability. It should test source-padding invariance, target causal invariance, source-perturbation sensitivity, and exact agreement between cached and full-prefix decoding on a small reference example.
+
+## Common misconceptions
+
+- **An encoder is simply a decoder with the mask removed.** Its output contract and typical use differ, even though both use Transformer blocks.
+- **Decoder-only training must compute one token at a time.** A supplied sequence can be processed in parallel under a causal mask; generation remains sequential.
+- **Cross-attention is bidirectional target attention.** It uses target queries and source keys and values across distinct axes.
+- **The source mask is a triangular target mask.** Source padding and target causality constrain different relationships.
+- **Encoder-decoder models always have lower inference cost.** Their cross-attention adds work at each target step.
+- **BERT, T5, and BART names fully specify a model.** Variant, objective, data, widths, masks, and checkpoints remain necessary information.
+- **Passing a source sequence to a decoder-only prompt is identical to cross-attention.** The representation, masking, cache, and source-target boundary differ.
+- **A successful generated output proves no future-target leakage occurred.** The model and data pipeline require explicit information-boundary tests.
+
+## Exercises
+
+1. Draw the self-attention eligibility matrix for a five-position encoder and decoder.
+2. State the score-tensor shape for eight heads, batch 2, target length 12, and source length 20.
+3. Explain why an encoder-only representation can use a right-context token while a causal decoder representation cannot.
+4. Implement mean pooling over valid encoder output positions.
+5. Add a target padding mask to the minimal encoder-decoder skeleton.
+6. Verify that a padded source key receives zero cross-attention mass.
+7. Write a test that changing a future target cannot change earlier decoder outputs.
+8. Write a test that changing a valid source may change target outputs.
+9. Compare source and target cache requirements for specified lengths, layers, heads, and widths.
+10. State the target shift needed to train a conditional autoregressive decoder.
+11. Explain why a rectangular cross-attention score matrix has different query and key axes.
+12. Design an evaluation where a complete input is valid for an encoder but invalid for a causal decoder prompt.
+13. Compare a decoder-only prompted translation interface with an encoder-decoder translation interface.
+14. Identify the metadata needed to load an encoder-decoder checkpoint safely.
+15. Test cached and full-prefix decoder outputs with identical source memory.
+16. State which chapter introduces tokenisation and which chapter derives the next-token objective.
+
+## Summary
+
+Encoder-only, decoder-only, and encoder-decoder models arrange Transformer blocks around different information boundaries. Encoders form bidirectional input representations. Decoders preserve a causal target prefix. Encoder-decoder models combine a bidirectional source encoder, a causal target decoder, and target-to-source cross-attention.
+
+The architecture choice affects outputs, masks, inference order, cache design, and valid evaluation inputs. It does not by itself specify a training objective, tokenizer, dataset, or decoding policy.
+
+## Looking ahead
+
+[Chapter 24](24-tokens-tokenisation.qmd) defines how text becomes the discrete token sequences that these architectures consume. [Chapter 25](25-next-token-prediction.qmd) then derives next-token prediction and autoregressive generation in detail.
+
+## Further reading
+
+The original encoder-decoder Transformer is specified by @vaswani2017. BERT provides an encoder-only pretraining example [@devlin2019bert]; T5 and BART provide encoder-decoder examples [@raffel2020t5; @lewis2020bart].

@@ -1,0 +1,275 @@
+---
+title: "Decoding and Generation"
+subtitle: "Turning next-token distributions into sequences under explicit policies"
+---
+
+## Chapter orientation
+
+### Why this chapter matters
+
+Chapter 25 defined a language model's next-token probability distribution. A generated response requires an additional policy that selects or samples from that distribution, repeats the process, and decides when to stop. Greedy decoding, temperature, top-k sampling, nucleus sampling, repetition controls, and output constraints can produce different text from the same model and prompt.
+
+Decoding is therefore part of the deployed system. It changes reproducibility, diversity, latency, output length, and the types of errors a user sees. It does not repair missing evidence, change the model's training data, or establish truth. This chapter defines the common policies and their evaluation.
+
+### Learning objectives
+
+By the end of this chapter, you should be able to:
+
+- distinguish a probability distribution from a decoding policy and a generated sequence;
+- implement greedy, temperature, top-k, and top-p selection on a toy distribution;
+- explain why sampling is stochastic and how seeds affect reproducibility;
+- identify stopping, length, repetition, and constraint policies as generation choices;
+- evaluate decoding settings against a stated task rather than a generic quality claim; and
+- record the configuration needed to reproduce a generation.
+
+### Running distribution
+
+For one prefix, suppose a vocabulary has probabilities for `the`, `a`, `cat`, `slept`, and `<eos>`. The model distribution is fixed in the first examples; only the selection rule changes.
+
+```{python}
+#| label: fig-distribution-decision
+#| fig-cap: "A decoder transforms a next-token probability distribution into a selected token under a declared rule."
+#| fig-alt: "A probability bar chart feeds into a decision box that outputs one selected token."
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle, FancyArrowPatch
+plt.style.use("seaborn-v0_8-whitegrid")
+blue,teal,orange,purple,grey="#24527a","#3a9188","#d97745","#7655a6","#5f6b76"
+tokens=np.array(["the","a","cat","slept","<eos>"])
+probs=np.array([.42,.25,.17,.10,.06])
+fig,ax=plt.subplots(figsize=(9,3.7)); ax.bar(tokens,probs,color=blue); ax.set_ylim(0,.5); ax.set_ylabel("next-token probability")
+ax.add_patch(FancyArrowPatch((4.2,.3),(5.45,.3),arrowstyle="-|>",color=orange,mutation_scale=14)); ax.add_patch(Rectangle((5.6,.12),1.3,.36,facecolor=teal,edgecolor="white")); ax.text(6.25,.3,"decoder",ha="center",va="center",color="white"); ax.text(7.55,.3,"selected\ntoken",ha="center",va="center",color=purple); ax.set_title("Distribution and decision are separate objects"); plt.tight_layout(); plt.show()
+```
+
+::: {.concept-box .concept-core #concept-decoding data-term="Decoding" data-domain="Large language models"}
+**Decoding.** The policy that turns a model's next-token distribution into an output sequence. Temperature, truncation, sampling, and stopping rules change the distribution of produced responses without changing the trained parameters.
+:::
+
+## Level 1 - Intuition
+
+### The model supplies options; decoding makes a choice
+
+Greedy decoding selects the highest-probability token at every step. It is deterministic when model computation is deterministic and the prompt is unchanged. It can be appropriate when a task has a narrow expected continuation, but it can also create repetitive or generic sequences because it always commits to the local maximum.
+
+Sampling selects a token according to the probability distribution, so lower-probability options can appear. Two runs can differ even when the model and prompt are identical. This is not evidence that the model changed; it is a property of the generation policy. A seed can make pseudorandom sampling reproducible for a declared implementation, but it does not make the output uniquely implied by the model.
+
+```{python}
+np.random.seed(7)
+print("greedy:",tokens[probs.argmax()])
+print("samples:",np.random.choice(tokens,size=8,p=probs))
+```
+
+Generated text is a sequence of such decisions. A locally likely first token can move the prefix into a different region of the model distribution. This is why a loss measured under teacher forcing does not fully describe the behaviour of an autoregressive system that conditions on its own selected tokens.
+
+### Stopping is also a decoding decision
+
+Many systems stop when an end-of-sequence token is selected, when a maximum new-token length is reached, or when a configured string or token sequence occurs. Each rule can truncate an answer or permit unnecessary continuation. A maximum length is not merely a user-interface setting: it changes which complete sequences can be emitted and may interact with the context budget in Chapter 27.
+
+```{python}
+generated=["the","cat","slept","<eos>"]
+for step,token in enumerate(generated,1):
+    print(step,token)
+    if token=="<eos>":
+        print("stop on end token"); break
+```
+
+## Level 2 - Distribution transformations
+
+### Temperature changes relative concentration
+
+Temperature divides logits before softmax. For logits \(z\) and temperature \(\tau>0\), the transformed distribution is \(\operatorname{softmax}(z/\tau)\). Values below one sharpen differences between logits; values above one flatten the distribution. Temperature does not add information or identify an appropriate answer. It changes how sharply the decoder follows the model's existing ranking.
+
+```{python}
+logits=np.log(probs)
+def softmax(x):
+    x=x-x.max(); e=np.exp(x); return e/e.sum()
+for temperature in [.5,1.0,1.5]:
+    print(temperature,np.round(softmax(logits/temperature),3))
+```
+
+```{python}
+#| label: fig-temperature
+#| fig-cap: "Lower temperatures concentrate probability on high-logit tokens, while higher temperatures flatten the sampling distribution."
+#| fig-alt: "Three line plots compare token probabilities at temperatures 0.5, 1.0, and 1.5."
+fig,ax=plt.subplots(figsize=(8,4))
+for temperature,c in [(.5,orange),(1.0,teal),(1.5,purple)]: ax.plot(tokens,softmax(logits/temperature),marker="o",label=f"T={temperature}",color=c)
+ax.set_ylabel("sampling probability"); ax.legend(); ax.set_title("Temperature transforms the distribution"); plt.tight_layout(); plt.show()
+```
+
+Very low temperature approaches greedy selection but remains a distribution. Very high temperature can allocate substantial mass to tokens that were unlikely under the original model. The useful setting depends on the task, prompt, model, and other controls; one numerical value should not be treated as a universal quality setting.
+
+### Top-k and top-p restrict the candidate set
+
+Top-k keeps the \(k\) highest-probability entries, sets the rest to zero, and renormalises. Nucleus or top-p sampling keeps the smallest high-probability set whose cumulative mass reaches a threshold \(p\), then renormalises. Top-k has a fixed candidate count; top-p adapts its count to the distribution's concentration [@holtzman2020curious].
+
+```{python}
+def top_k_distribution(p,k):
+    keep=np.argsort(p)[-k:]; q=np.zeros_like(p); q[keep]=p[keep]; return q/q.sum()
+def top_p_distribution(p,threshold):
+    order=np.argsort(p)[::-1]; cumulative=np.cumsum(p[order]); keep=order[cumulative<=threshold]
+    if len(keep)==0: keep=order[:1]
+    q=np.zeros_like(p); q[keep]=p[keep]; return q/q.sum()
+print("top-k=3:",np.round(top_k_distribution(probs,3),3))
+print("top-p=.8:",np.round(top_p_distribution(probs,.8),3))
+```
+
+The exact top-p boundary convention must be stated: implementations often include the first token that crosses the threshold, while the toy function above retains entries up to the threshold. Small implementation details can change generated output, especially near a boundary.
+
+```{python}
+#| label: fig-truncation-policies
+#| fig-cap: "Top-k keeps a fixed number of candidates, while top-p keeps a variable number sufficient to reach a cumulative probability threshold."
+#| fig-alt: "A ranked probability bar chart highlights three top-k entries and the entries retained by an 0.8 cumulative threshold."
+order=np.argsort(probs)[::-1]; ranked=probs[order]
+fig,ax=plt.subplots(figsize=(8,4)); ax.bar(np.arange(len(tokens)),ranked,color=[teal,teal,teal,grey,grey]); ax.plot(np.arange(len(tokens)),np.cumsum(ranked),color=orange,marker="o",label="cumulative mass"); ax.axhline(.8,color=purple,ls="--",label="top-p threshold"); ax.set_xticks(np.arange(len(tokens)),tokens[order]); ax.set_ylabel("probability / cumulative mass"); ax.legend(); ax.set_title("Candidate restrictions depend on distribution rank"); plt.tight_layout(); plt.show()
+```
+
+## Level 3 - Sequence controls
+
+### Repetition controls change the sequence distribution
+
+Systems sometimes penalise tokens that appeared in the prefix, block repeated n-grams, or alter logits after selected patterns. These controls can reduce some visible loops, but they also can suppress legitimate repetition: names, quotations, structured lists, and code may require the same token or phrase. A repetition setting should therefore be evaluated on examples where repetition is both undesirable and necessary.
+
+```{python}
+seen={"the","cat"}; adjusted=logits.copy()
+for i,t in enumerate(tokens):
+    if t in seen: adjusted[i]-=.8
+print("original:",np.round(softmax(logits),3))
+print("penalised:",np.round(softmax(adjusted),3))
+```
+
+Constraints can be hard rather than soft. A JSON grammar, allowed vocabulary, stop sequence, or tool-call schema can make invalid outputs impossible under the decoder, while leaving questions about the correctness of valid content. Constraints operate on form; they do not verify claims unless they are connected to an external validation process.
+
+```{python}
+allowed=np.array([False,False,True,True,True])
+constrained=np.where(allowed,logits,-np.inf)
+print("allowed sampling distribution:",np.round(softmax(constrained),3))
+```
+
+### Beam search is a search policy, not a probability objective
+
+Beam search retains several partial sequences and expands them, often ranking by accumulated log probability with an optional length adjustment. It can find a higher-probability complete sequence than greedy decoding under its search width, but it is more costly and can favour short or repetitive text without a declared length policy. It is useful to distinguish its search score from a user-facing quality measure.
+
+```{python}
+beams=[(["the"],np.log(.42)),(["a"],np.log(.25))]
+extensions={"the":[("cat",.6),("dog",.3)],"a":[("cat",.5),("dog",.4)]}
+candidates=[]
+for prefix,score in beams:
+    for token,p in extensions[prefix[-1]]: candidates.append((prefix+[token],score+np.log(p)))
+print(sorted(candidates,key=lambda x:x[1],reverse=True))
+```
+
+### Length preferences need to be made visible
+
+Sequence probability multiplies conditional probabilities, so longer sequences usually accumulate more negative log probability than shorter ones. A decoder that ranks complete sequences therefore needs an explicit policy for length, end tokens, and incomplete outputs. Beam search implementations commonly use a length-normalised score or penalty for this reason. The formula and stopping rule matter: a change can favour concise answers, unfinished fragments, or unnecessarily extended text.
+
+The right policy depends on the task. Extracting one span, producing valid code, writing a bounded abstract, and continuing open-ended prose have different length requirements. A generic statement that a setting “improves quality” is not enough. The evaluation must identify the desired completion boundary and assess whether outputs stop too early, too late, or at an inappropriate structural point.
+
+```{python}
+#| label: fig-length-policy
+#| fig-cap: "A length policy can change the ranking of candidate sequences even when their token-level probabilities are unchanged."
+#| fig-alt: "A bar chart compares raw accumulated log probability and a length-normalised score for a short and long candidate."
+labels=["short candidate","long candidate"]
+raw_scores=np.array([-2.0,-2.7]); normalised=np.array([-1.0,-.9]); x=np.arange(2); w=.35
+fig,ax=plt.subplots(figsize=(7,3.8)); ax.bar(x-w/2,raw_scores,w,label="raw log score",color=blue); ax.bar(x+w/2,normalised,w,label="illustrative length-normalised score",color=teal); ax.set_xticks(x,labels); ax.axhline(0,color=grey,lw=.7); ax.legend(); ax.set_title("Ranking depends on an explicit length policy"); plt.tight_layout(); plt.show()
+```
+
+### Output diversity is not an unconditional good
+
+Sampling several continuations can be useful when a task permits alternatives, such as brainstorming, creative writing, or producing candidate solutions for a later verifier. Diversity can be harmful when an answer must be stable, precisely formatted, or grounded in a supplied record. Increasing temperature or candidate support changes the distribution of output strings; it does not distinguish useful variation from unsupported variation.
+
+An evaluation should therefore state whether it values one reproducible best answer, multiple candidates with a selection stage, or variation subject to a constraint. When several samples are generated, report the number of draws and aggregation rule. Selecting the most attractive sample after inspection without recording that selection produces a result that cannot be reproduced or fairly compared with one deterministic output.
+
+```{python}
+np.random.seed(3)
+draws=[np.random.choice(tokens,p=softmax(logits/.9)) for _ in range(20)]
+counts={token:draws.count(token) for token in tokens}
+print("sample counts:",counts)
+```
+
+### Token-level controls interact across steps
+
+Temperature, top-p, penalties, and constraints are recalculated at every generated position. A setting that appears mild for the first token can have a larger effect after the prefix changes or after a penalty has accumulated. Stop sequences can be split into several token IDs, so checking visible strings after decoding is not always equivalent to checking token sequences during decoding. The tokenizer and exact control stage should be recorded.
+
+This interaction is a reason to test full sequences rather than only the first next-token distribution. A policy evaluation can retain traces of logits or candidate sets for a small reference prompt, then compare the selected IDs and stop reason across implementations. The trace is especially useful when a library upgrade changes a boundary convention or numerical path.
+
+### Decoding must match the consequence of an error
+
+For a structured extraction task, a system can favour deterministic decoding, an exact schema, and a validator because variation has little value and an incorrect field can cause a downstream error. For exploratory drafting, several sampled candidates may be useful if a reviewer or verifier selects among them. For a question that requires external evidence, sampling cannot compensate for missing or irrelevant context. The selection policy should follow the task's decision rule and cost of failure.
+
+This is also why output quality and model probability should not be conflated. A highly probable continuation can be generic, outdated, or unsupported. A low-probability continuation may be correct but should be checked against evidence or a task verifier. Decoding controls the way a model distribution is exposed; it is not an independent source of knowledge.
+
+```{python}
+tasks={"extraction":{"temperature":0,"validator":"schema and source match"},"drafting":{"temperature":.8,"validator":"human selection"},"calculation":{"temperature":0,"validator":"exact check"}}
+for task,policy in tasks.items(): print(task,policy)
+```
+
+## Level 4 - Auditing generation
+
+### A decoding evaluation varies policies deliberately
+
+An evaluation should hold model version, prompt construction, context policy, and scoring rule fixed while varying one decoding decision at a time. It should report output length, stop reason, random seed where applicable, temperature, candidate restriction, penalties, constraints, and number of samples or beams. Comparing two outputs generated under hiddenly different settings does not identify whether a change came from the model or the decoder.
+
+For deterministic tasks, assess exact validity, extraction accuracy, code execution, or another declared criterion. For open-ended tasks, collect multiple samples and evaluate properties such as factual support, adherence to required format, diversity, and harmful or irrelevant content under a defined protocol. A single appealing sample is not an estimate of a stochastic policy's expected behaviour.
+
+```{python}
+#| label: fig-policy-audit
+#| fig-cap: "A generation result depends on the model and prompt as well as a recorded decoding policy, stopping rule, and evaluation criterion."
+#| fig-alt: "Boxes for model and prompt feed into decoding settings, then generated samples and task-specific evaluation."
+fig,ax=plt.subplots(figsize=(9,3)); ax.axis("off")
+for x,label,c in [(.3,"model +\nprompt",blue),(2.5,"decoding\npolicy",teal),(4.7,"generated\nsamples",orange),(6.9,"declared\nevaluation",purple)]:
+    ax.add_patch(Rectangle((x,1.15),1.5,.62,facecolor=c,edgecolor="white")); ax.text(x+.75,1.46,label,ha="center",va="center",color="white")
+    if x<6: ax.add_patch(FancyArrowPatch((x+1.53,1.46),(x+2.12,1.46),arrowstyle="-|>",color=grey,mutation_scale=12))
+ax.text(4.5,.55,"Record the settings that turn a probability distribution into an observable output.",ha="center",color=grey); ax.set_xlim(0,8.7); ax.set_ylim(.25,2.2); plt.show()
+```
+
+### A generation record supports reproduction and diagnosis
+
+At minimum, retain the checkpoint and tokenizer versions, prompt template and final token IDs, system messages or tool constraints, context and truncation policy, maximum new tokens, temperature, top-k or top-p convention, seed, repetition controls, stop sequences, beam settings, hardware or numerical settings where determinism matters, output IDs, and stop reason. This record makes it possible to reproduce a result or identify why a boundary case changed after a system update.
+
+```{python}
+generation_record={"temperature":.8,"top_p":.9,"max_new_tokens":256,"seed":17,"stop_reason":"eos","tokenizer":"versioned"}
+assert {"temperature","max_new_tokens","tokenizer"} <= set(generation_record)
+print(generation_record)
+```
+
+## Common misconceptions
+
+- **Greedy output is the model's only answer.** It is one selection rule applied repeatedly.
+- **Temperature improves factuality.** It changes the concentration of sampling probabilities.
+- **Top-p always retains the same number of tokens.** Candidate count changes with distribution shape.
+- **A fixed seed makes all generation environments identical.** Implementations, precision, and sampling conventions can still differ.
+- **Repetition penalties solve hallucination.** They alter token preferences without adding evidence.
+- **A valid constrained format proves correct content.** Structural validity and factual correctness are separate checks.
+
+## Exercises
+
+1. Select the greedy token from a supplied distribution.
+2. Explain why sampling produces different valid runs.
+3. Calculate a temperature-transformed softmax for two logits.
+4. Implement top-k filtering and state its boundary rule.
+5. Implement top-p filtering that includes the threshold-crossing token.
+6. Compare top-k and top-p on a peaked and a flat distribution.
+7. State two stop policies and their failure modes.
+8. Apply a token repetition penalty to a toy logit vector.
+9. Explain why a hard JSON constraint does not verify a claim inside JSON.
+10. Expand one beam-search step and rank candidate prefixes.
+11. Design an evaluation for stochastic short-answer generation.
+12. State which settings must be held fixed when comparing temperature values.
+13. List the fields needed to reproduce one generated output.
+14. Explain why teacher-forced loss does not fully determine generated sequences.
+15. Compare a length cap with an end-token stop rule.
+16. Identify the chapter that treats instruction tuning after base pretraining.
+
+## Summary
+
+Decoding turns next-token distributions into generated sequences through a sequence of explicit decisions. Temperature, candidate restrictions, search, penalties, constraints, and stopping rules all change the output policy. They should be selected and evaluated against a stated task, not presented as generic quality improvements.
+
+Generation records must retain the model, input, tokenisation, and decoding configuration. [Chapter 29](29-instruction-tuning.qmd) examines supervised adaptation from base next-token prediction to instruction-following behaviour.
+
+## Looking ahead
+
+Decoding changes how a fixed checkpoint behaves at inference time. [Chapter 29](29-instruction-tuning.qmd) examines a different intervention: supervised adaptation of the checkpoint to structured instruction-and-response examples.
+
+## Further reading
+
+Nucleus sampling is analysed by @holtzman2020curious. The base autoregressive distribution and causal target shift are developed in Chapter 25.

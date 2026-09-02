@@ -1,0 +1,49 @@
+---
+title: "Welcome"
+---
+
+This handbook explains machine-learning concepts at four levels of depth. Each lesson begins with an accessible explanation and then progressively adds mechanism, mathematics, code, and modern systems context.
+
+## The four levels
+
+::: {.callout-note}
+### Level 1 - Intuition
+
+What is the concept, and why does it matter?
+:::
+
+::: {.callout-note}
+### Level 2 - Mechanics
+
+How does it work step by step?
+:::
+
+::: {.callout-note}
+### Level 3 - Mathematics & Code
+
+How can we express and implement it?
+:::
+
+::: {.callout-note}
+### Level 4 - Research & Systems
+
+How does it behave in modern research and production systems?
+:::
+
+## How to use this book
+
+You can read every level in sequence, or stop when the explanation reaches the depth you need. The code examples are intentionally small: their purpose is to make the underlying mechanism visible before introducing framework abstractions.
+
+This prototype follows a dependency chain:
+
+1. Gradient descent explains how parameters are updated.
+2. Backpropagation explains how gradients are computed.
+3. The artificial neuron provides the model whose parameters are trained.
+
+## Prerequisites
+
+No prior machine-learning experience is assumed. Basic algebra is useful, but the mathematical requirements are introduced as they become necessary.
+
+## Prototype status
+
+This is the initial prototype of the handbook. It is designed to test the lesson structure, level boundaries, code style, and Quarto presentation before the curriculum is expanded.

@@ -1,0 +1,328 @@
+---
+title: "Positional Information"
+subtitle: "Giving attention a representation of order"
+---
+
+## Chapter orientation
+
+### Why this chapter matters
+
+Self-attention compares representations at different sequence positions, but the operation in Chapter 20 has no intrinsic notion of first, next, or last. If the same input vectors are permuted, ordinary self-attention permutes its outputs in the same way. It cannot on its own distinguish `dog bites person` from `person bites dog`.
+
+Positional information changes the representations or attention scores so that location and distance can affect a computation. This chapter compares absolute and relative approaches, derives the original sinusoidal encoding, and explains why position handling becomes a design and evaluation decision at long context lengths. It does not yet assemble residual paths, normalisation, attention, and feed-forward computation into a Transformer block; Chapter 22 does that.
+
+### Learning objectives
+
+By the end of this chapter, you should be able to:
+
+- explain why self-attention without positional information is permutation-equivariant;
+- distinguish a token's content representation from its position representation;
+- construct and interpret sinusoidal positional encodings;
+- distinguish learned absolute, fixed absolute, relative, rotary, and attention-bias approaches;
+- state where a positional method enters a Transformer computation;
+- implement a small positional encoding module and test its shape and order contracts;
+- explain why the training context length does not automatically establish reliable performance beyond that range; and
+- report positional conventions when comparing or deploying models.
+
+### Running sequence
+
+The running sequence contains five content vectors. We will preserve those vectors and change only their positional information. This separates the question of *what* a token represents from the question of *where it appears*.
+
+```{python}
+#| label: fig-permutation-problem
+#| fig-cap: "Without positional information, permuting input rows permutes self-attention outputs; the operation has no basis for preferring one order over another."
+#| fig-alt: "Two three-token sequences with the same coloured token vectors in different orders flow through the same attention box and emerge in correspondingly permuted order."
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle, FancyArrowPatch
+
+plt.style.use("seaborn-v0_8-whitegrid")
+blue, teal, orange, purple, grey = "#24527a", "#3a9188", "#d97745", "#7655a6", "#5f6b76"
+fig,ax=plt.subplots(figsize=(10.5,4.1)); ax.axis("off")
+tokens=[("A",blue),("B",orange),("C",teal)]
+for row,order in enumerate([[0,1,2],[2,0,1]]):
+    y=3.1-row*2.25
+    ax.text(.15,y+.27,"input" if row==0 else "permuted input",ha="left",va="center",fontsize=10)
+    for j,idx in enumerate(order):
+        x=1.25+j*.9; label,colour=tokens[idx]
+        ax.add_patch(Rectangle((x,y),.66,.54,facecolor=colour,edgecolor="white")); ax.text(x+.33,y+.27,label,ha="center",va="center",color="white")
+    ax.add_patch(FancyArrowPatch((4.1,y+.27),(5.05,y+.27),arrowstyle="-|>",mutation_scale=13,color=grey))
+    ax.add_patch(Rectangle((5.1,y-.04),1.55,.62,facecolor=purple,edgecolor="white")); ax.text(5.875,y+.27,"self-attention",ha="center",va="center",color="white")
+    ax.add_patch(FancyArrowPatch((6.7,y+.27),(7.62,y+.27),arrowstyle="-|>",mutation_scale=13,color=grey))
+    for j,idx in enumerate(order):
+        x=7.7+j*.7; label,colour=tokens[idx]
+        ax.add_patch(Rectangle((x,y),.53,.54,facecolor=colour,edgecolor="white")); ax.text(x+.265,y+.27,label+"'",ha="center",va="center",color="white",fontsize=9)
+ax.text(5.9,.25,"The output relation changes only by the same permutation.",ha="center",color=grey)
+ax.set_xlim(0,10.1); ax.set_ylim(0,4); plt.show()
+```
+
+::: {.concept-box .concept-core #concept-positional-information data-term="Positional information" data-domain="Representations and Transformers"}
+**Positional information.** A representation of order supplied to an architecture whose attention calculation would otherwise be insensitive to sequence permutation. Absolute, relative, and rotary schemes make different assumptions about position and distance.
+:::
+
+## Level 1 - Intuition
+
+### Attention needs order supplied to it
+
+Self-attention receives a collection of vectors and computes similarities between them. Its query-key calculation can decide that two vectors match, but it does not contain a clock or an index. A causal mask tells a decoder which positions are allowed to use which other positions, but it does not tell the model how far apart two allowed positions are or which content vector occupied an earlier slot.
+
+The distinction is operational. A word embedding can represent the token `bank`; a positional representation can indicate that this occurrence is third in a sequence. A model commonly combines the two before attention. The resulting input says both something about the item and something about its location.
+
+### Location and distance answer different questions
+
+Absolute position asks where a token is: position 0, 1, or 500. Relative position asks how two tokens are related: adjacent, ten positions apart, or in a particular order. Both may help, but they make different assumptions. A learned table of absolute vectors associates a parameter with each training position. A relative method can make an attention score depend directly on the displacement $j-t$ between query $t$ and key $j$.
+
+```{python}
+#| label: fig-absolute-relative
+#| fig-cap: "Absolute positions label individual locations; relative positions label the displacement between a query and a key."
+#| fig-alt: "Five positions are shown in a row with absolute labels zero through four. Arrows from position four to positions one and three are labelled minus three and minus one."
+fig,ax=plt.subplots(figsize=(10,2.9)); ax.axis("off")
+for i in range(5):
+    x=1+i*1.7
+    ax.add_patch(Rectangle((x,1.15),.8,.55,facecolor=blue,edgecolor="white")); ax.text(x+.4,1.425,f"token {i+1}",ha="center",va="center",color="white",fontsize=9)
+    ax.text(x+.4,.82,f"absolute {i}",ha="center",color=grey,fontsize=9)
+for key,colour in [(0,orange),(2,teal)]:
+    ax.add_patch(FancyArrowPatch((6.8,1.12),(1+key*1.7+.4,1.12),connectionstyle="arc3,rad=.35",arrowstyle="-|>",mutation_scale=12,color=colour))
+    ax.text((6.8+1+key*1.7+.4)/2,2.18,f"relative {key-3}",ha="center",color=colour)
+ax.text(6.8,.36,"query at absolute 3",ha="center",color=purple)
+ax.set_xlim(.3,9.8); ax.set_ylim(.1,2.6); plt.show()
+```
+
+Position does not turn attention into grammar or guarantee that a model uses order correctly. It makes order available as an input feature. Training still determines whether a model learns a useful dependence and whether that dependence transfers to a new sequence length or domain.
+
+Level 1 identified the missing signal. Level 2 makes the common ways of inserting that signal explicit.
+
+## Level 2 - Mechanics
+
+### Absolute encodings are added to content vectors
+
+For a token representation $e_t\in\mathbb{R}^{D}$ and a positional vector $p_t\in\mathbb{R}^{D}$, the usual absolute construction is
+
+$$x_t=e_t+p_t.$$
+
+The sum has the same width as the original token vector, so the query, key, and value projections from Chapter 20 do not need a new input interface. Addition also means the model must learn to use the combined representation; it does not preserve a separately labelled position field.
+
+The original Transformer used fixed sinusoidal vectors [@vaswani2017]. For coordinate pair $i$ and position $t$,
+
+$$p_{t,2i}=\sin\left(t/10000^{2i/D}\right),\qquad p_{t,2i+1}=\cos\left(t/10000^{2i/D}\right).$$
+
+Different coordinate pairs vary at different rates. Nearby positions therefore have related, but not identical, vectors. The formula contains no learned position-table parameters and can be evaluated for a position not observed during training.
+
+```{python}
+#| label: fig-sinusoidal-positions
+#| fig-cap: "Sinusoidal positional coordinates vary at different frequencies, creating a distinct fixed vector for each displayed position."
+#| fig-alt: "Four curves, two fast and two slow sine or cosine waves, are plotted across positions zero to thirty-one."
+positions=np.arange(32); width=8
+angles=positions[:,None]/np.power(10000,(2*np.arange(width//2))/width)
+pe=np.empty((len(positions),width)); pe[:,0::2]=np.sin(angles); pe[:,1::2]=np.cos(angles)
+fig,ax=plt.subplots(figsize=(9,4.1))
+for d in [0,1,4,5]: ax.plot(positions,pe[:,d],label=f"coordinate {d}")
+ax.set_xlabel("Position"); ax.set_ylabel("Positional value"); ax.set_title("Fixed sinusoidal coordinates"); ax.legend(ncol=2); plt.tight_layout(); plt.show()
+```
+
+### Learned tables trade an explicit rule for fitted parameters
+
+A learned absolute table stores $P\in\mathbb{R}^{L\times D}$ for a configured maximum length $L$. At position $t<L$, the model retrieves row $P_t$ and adds it to $e_t$. This gives training freedom to fit position-specific patterns, but positions outside the table need an explicit policy: failure, truncation, interpolation, or a different method. Simply increasing an index at inference is not a valid implementation when the parameter table ends at $L-1$.
+
+The distinction between a configured maximum and an observed maximum is useful. A table might have rows for 2,048 locations, while training examples rarely extend beyond 512 tokens. Rows near the table boundary can then receive much less direct training signal than early rows. Conversely, a fixed formula assigns a vector at every integer position but does not make those positions familiar to the rest of the trained network. Both cases require evidence at the intended lengths.
+
+```{python}
+#| label: fig-table-boundary
+#| fig-cap: "A learned absolute position table has a finite index range; a fixed formula can be evaluated beyond it, although neither fact establishes model quality at longer lengths."
+#| fig-alt: "A row of table cells labelled zero through seven ends at a red boundary, while a sinusoidal curve continues beyond that boundary."
+fig,ax=plt.subplots(figsize=(9,3)); ax.axis("off")
+for i in range(8):
+    ax.add_patch(Rectangle((.6+i*.82,1.35),.68,.52,facecolor=blue,edgecolor="white")); ax.text(.94+i*.82,1.61,str(i),ha="center",va="center",color="white")
+ax.axvline(7.32,color=orange,linewidth=2); ax.text(7.38,2.08,"learned-table boundary",color=orange,ha="left")
+x=np.linspace(.6,9.35,250); y=.55+.23*np.sin(2.2*x)
+ax.plot(x,y,color=teal,linewidth=2); ax.text(8.8,.2,"fixed formula",color=teal,ha="center")
+ax.text(3.5,2.42,"available learned indices",ha="center",color=grey)
+ax.set_xlim(.2,10); ax.set_ylim(0,2.7); plt.show()
+```
+
+### Relative methods enter the attention relation
+
+Relative position methods alter the query-key relation rather than only the input vectors. One simplified score construction is
+
+$$s_{t,j}=\frac{q_t k_j^\top+q_t r_{j-t}^\top}{\sqrt{D_k}},$$
+
+where $r_{j-t}$ represents the relative displacement. The first term compares content; the second can make the score depend on distance and direction. Shaw, Uszkoreit, and Vaswani add learned relative representations to self-attention, rather than relying only on absolute input positions [@shaw2018self].
+
+Implementations cannot always store one independent relation for every possible distance. They may clip displacement to a range, map many distances into buckets, or use a formula. Clipping $j-t$ at $\pm K$ makes all distances beyond $K$ share a representation. This saves parameters and can pool sparse evidence, but it removes distinctions among those more distant positions. The chosen boundary is therefore part of the model's representation, not a neutral memory optimisation.
+
+```{python}
+content=np.array([[.8,.1],[.2,.7],[.6,.5],[.1,.9]])
+absolute=pe[:4,:2]
+combined=content+absolute
+print("content at position 0:",content[0].round(3))
+print("positional vector at position 0:",absolute[0].round(3))
+print("combined input at position 0:",combined[0].round(3))
+print("same content at another position changes input:",np.allclose(combined[0],content[0]+pe[1,:2]))
+```
+
+The final line is intentionally `False`: moving unchanged content to another position changes its input to attention. That is the mechanism by which an absolute encoding breaks the permutation symmetry in the opening figure.
+
+Level 2 has located positional information either at the layer input or in the attention relation. Level 3 checks those claims with small numerical and implementation tests.
+
+## Level 3 - Mathematics & Code
+
+### A permutation test states the original limitation precisely
+
+Let $F$ denote an attention layer with no positional mechanism and let $\Pi$ be a permutation matrix that reorders sequence rows. For standard self-attention without a position-dependent mask,
+
+$$F(\Pi X)=\Pi F(X).$$
+
+This is permutation equivariance, not invariance: the output does change, but only by being rearranged in the same manner as the input. If a subsequent task needs different outputs for different orders of the same content, the model requires a position signal.
+
+```{python}
+import torch
+from torch import nn
+
+torch.manual_seed(21)
+x=torch.randn(1,4,6); perm=torch.tensor([2,0,3,1])
+attention=nn.MultiheadAttention(embed_dim=6,num_heads=2,batch_first=True,dropout=0.0)
+out,_=attention(x,x,x,need_weights=False)
+out_perm,_=attention(x[:,perm],x[:,perm],x[:,perm],need_weights=False)
+print("attention respects input permutation:",torch.allclose(out_perm,out[:,perm],atol=1e-6))
+```
+
+The check holds because the same attention layer is applied after reordering every query, key, and value row. It is a useful unit test for a reference implementation. A causal mask changes the symmetry because eligibility now depends on row order, but it still does not supply a representation of distances among eligible positions.
+
+### A fixed positional module has a clear input-output contract
+
+```{python}
+class SinusoidalPosition(nn.Module):
+    def __init__(self,width,max_length=512):
+        super().__init__()
+        position=torch.arange(max_length,dtype=torch.float32).unsqueeze(1)
+        frequency=torch.exp(torch.arange(0,width,2,dtype=torch.float32)*(-np.log(10000.0)/width))
+        table=torch.zeros(max_length,width)
+        table[:,0::2]=torch.sin(position*frequency)
+        table[:,1::2]=torch.cos(position*frequency)
+        self.register_buffer("table",table.unsqueeze(0),persistent=False)
+    def forward(self,x,offset=0):
+        _,length,width=x.shape
+        if offset+length>self.table.shape[1]: raise ValueError("position table too short")
+        return x+self.table[:,offset:offset+length,:].to(dtype=x.dtype,device=x.device)
+
+module=SinusoidalPosition(width=6,max_length=16)
+base=torch.zeros(2,4,6); positioned=module(base)
+print("shape:",tuple(positioned.shape))
+print("positions 0 and 1 differ:",not torch.allclose(positioned[:,0],positioned[:,1]))
+print("same position is shared across batch:",torch.allclose(positioned[0,2],positioned[1,2]))
+```
+
+`register_buffer` stores fixed values with the module so they follow device moves and checkpoint conventions without becoming optimised parameters. The `offset` argument matters during cached autoregressive inference: a newly generated token must receive its global position, not position zero of a short one-token call.
+
+The offset contract is easy to state and easy to violate. If a sequence's first four tokens have already been processed, a one-token continuation has sequence length one in the present call but global position four. Reusing the position-zero vector changes its query and key representation. The error can leave tensor shapes valid while making cached generation disagree with a full forward pass.
+
+```{python}
+prefix=torch.zeros(1,4,6); next_token=torch.zeros(1,1,6)
+full=module(torch.zeros(1,5,6))[:,4]
+cached_correct=module(next_token,offset=4)[:,0]
+cached_wrong=module(next_token,offset=0)[:,0]
+print("correct cache offset agrees with full sequence:",torch.allclose(full,cached_correct))
+print("reusing position zero disagrees:",not torch.allclose(full,cached_wrong))
+```
+
+### Rotary position embeddings rotate query and key pairs
+
+Rotary position embeddings (RoPE) apply a position-dependent two-dimensional rotation to adjacent query and key coordinates. For a coordinate pair $(u,v)$ and angle $\theta_t$,
+
+$$R_t\begin{bmatrix}u\\v\end{bmatrix}=\begin{bmatrix}\cos\theta_t&-\sin\theta_t\\ \sin\theta_t&\cos\theta_t\end{bmatrix}\begin{bmatrix}u\\v\end{bmatrix}.$$
+
+Rotating both a query at $t$ and a key at $j$ makes their dot product depend on their relative displacement under the chosen frequency construction. RoPE therefore inserts position into the attention comparison itself [@su2021roformer].
+
+```{python}
+def rotate_pairs(x,positions,base=10000.0):
+    # x has shape (sequence, even_width); positions has shape (sequence,)
+    width=x.shape[-1]; freq=1.0/(base**(np.arange(0,width,2)/width))
+    angle=positions[:,None]*freq; c,s=np.cos(angle),np.sin(angle)
+    even,odd=x[:,0::2],x[:,1::2]
+    out=np.empty_like(x); out[:,0::2]=even*c-odd*s; out[:,1::2]=even*s+odd*c
+    return out
+
+q=np.array([[1.,0.,.4,-.2]]); k=np.array([[.7,.5,-.1,.9]])
+q_at_3=rotate_pairs(q,np.array([3])); k_at_5=rotate_pairs(k,np.array([5]))
+q_at_8=rotate_pairs(q,np.array([8])); k_at_10=rotate_pairs(k,np.array([10]))
+print("same relative displacement gives same dot product:",np.allclose(q_at_3@k_at_5.T,q_at_8@k_at_10.T))
+```
+
+The test uses pairs with equal relative displacement ($5-3=10-8$). It tests a mathematical property of this small implementation, not a claim that a trained model treats every equal-distance relation alike.
+
+## Level 4 - Research & Systems
+
+### Position methods encode different extrapolation assumptions
+
+Fixed sinusoids can be computed beyond a training length, but this does not demonstrate that a trained model will use those unseen combinations reliably. Learned absolute tables have a hard parameter boundary unless the implementation changes or extends them. Relative and rotary methods may be more compatible with length variation, but their practical behaviour depends on the training distribution, frequency choices, optimisation, attention masks, and the task. A model card or evaluation report should therefore name both the configured context limit and the lengths on which performance was measured.
+
+Attention biases provide another family of designs. A bias $b_{j-t}$ can be added directly to a score before softmax, favouring or penalising selected relative distances without adding a vector to the value mixture. Linear distance biases and bucketed relative distances reduce or structure the number of position-dependent parameters. These methods are not interchangeable: they offer different information to different parts of the computation.
+
+Relative methods also require a direction convention. In a causal decoder, a previous key has $j-t<0$ if the score is indexed as query minus key in the opposite order, or $j-t>0$ under another implementation. The sign itself does not carry a universal meaning; the code, mask, and documentation must agree. A reversed sign can silently make a trained relative table associate one distance class with the wrong direction.
+
+```{python}
+#| label: fig-relative-bias
+#| fig-cap: "A relative attention bias can change score preference by distance before softmax, while content scores remain unchanged."
+#| fig-alt: "Two line charts compare unmodified equal content scores with scores after a negative distance-proportional bias, which favours nearby keys."
+distance=np.arange(0,9); content_score=np.zeros_like(distance,dtype=float); bias=-.35*distance
+fig,ax=plt.subplots(figsize=(8.5,4))
+ax.plot(distance,content_score,marker="o",label="content contribution",color=blue)
+ax.plot(distance,content_score+bias,marker="o",label="after relative bias",color=orange)
+ax.set_xlabel("Absolute query-key distance"); ax.set_ylabel("Score before softmax"); ax.set_title("A score bias changes distance preference"); ax.legend(); plt.tight_layout(); plt.show()
+```
+
+### Long-context claims require positional audits
+
+Extending a context window changes more than a maximum index. It changes the number of attention pairs, the distribution of relative distances, cache memory, and possibly the position regime on which the model was trained. Interpolation, frequency rescaling, continued training, and architecture-specific modifications are choices with empirical consequences. Their effect can differ between retrieval, copying, local syntax, long-document summarisation, and multi-step generation.
+
+The relevant test is task-specific. A short answer at the end of a long context may depend only on recent tokens; a successful test there does not establish retrieval from the middle of a document. Evaluation should place controlled information at varied absolute locations and varied relative distances, use enough distractors to make retrieval non-trivial, and report performance by length rather than only a pooled average. It should also separate failure to fit in memory from a change in output quality.
+
+An audit should record the position method; whether positions are absolute or relative; table size or frequency formula; indexing origin; padding convention; treatment of packed sequences; causal offset; cache offset; configured and trained lengths; evaluation lengths; and any scaling or interpolation rule. Tests should include moving the same content to a different location, checking cached and non-cached logits at matched positions, and verifying that padded locations neither receive nor influence valid-token output.
+
+### Position signals are not complete explanations
+
+Attention maps may change after a positional intervention because position affects queries and keys, values, or an additive score term depending on the design. That does not identify a single linguistic or semantic mechanism. A valid claim should specify the architecture, position method, intervention, evaluation set, and measured output difference. It should not infer an explanation from a periodic curve or one attractive attention heatmap.
+
+## Common misconceptions
+
+- **A causal mask gives attention a full notion of order.** It supplies an eligibility boundary, not distances or absolute locations.
+- **Adding positions means every order-sensitive task is solved.** It makes order available; learning and transfer still depend on data and optimisation.
+- **Sinusoidal encodings guarantee long-context generalisation.** They can be evaluated at new positions, but model behaviour there remains empirical.
+- **Learned absolute positions are values in the input text.** They are model parameters indexed by location.
+- **Relative position and absolute position are the same representation with different names.** They answer different computational questions.
+- **RoPE rotates token values.** In the usual construction it rotates query and key coordinate pairs before score calculation.
+- **An attention bias changes the value retrieved from a token.** It changes the score preference before weights are computed.
+- **A longer configured context proves a longer usable context.** Evaluation must test the relevant lengths and tasks.
+
+## Exercises
+
+1. Explain, using a permutation matrix, why self-attention without position is permutation-equivariant.
+2. Construct sinusoidal vectors of width eight for positions zero through three.
+3. Plot cosine similarity between the position-zero vector and later sinusoidal vectors.
+4. State the parameter count for a learned absolute table with length 2,048 and width 768.
+5. Implement an explicit failure test when an input exceeds a learned table's maximum length.
+6. Explain why adding absolute vectors preserves model width.
+7. Derive the matrix form of the two-dimensional rotary rotation.
+8. Verify numerically that the rotary code preserves the norm of each coordinate pair.
+9. Test cached and un-cached positional offsets for a short causal sequence.
+10. Implement a clipped relative-distance lookup and state what information clipping loses.
+11. Compare score matrices with and without a distance bias when content scores are identical.
+12. Explain why a causal mask and a relative-position method have separate responsibilities.
+13. Design an evaluation that distinguishes short-range from long-range positional use.
+14. Report the positional metadata needed to reproduce a long-context result.
+15. Identify one way packed sequences can make position indexing ambiguous.
+16. State which components are still required to form the full Transformer block in Chapter 22.
+
+## Summary
+
+Self-attention alone preserves a permutation symmetry: reordering its inputs reorders its outputs. Positional information breaks that symmetry by changing input representations, attention scores, or both. Absolute positions identify locations; relative positions represent displacement between sequence elements.
+
+Sinusoidal, learned, relative, rotary, and bias-based approaches provide different position signals and different behaviour outside the training range. Their choice must be treated as part of the model specification, especially when a system claims to handle long contexts.
+
+## Looking ahead
+
+[Chapter 22](22-transformer-block.qmd) combines self-attention and positional information with residual paths, normalisation, and a feed-forward network to define one complete Transformer block.
+
+## Further reading
+
+The original fixed sinusoidal encoding appears in @vaswani2017. Relative position representations are developed by @shaw2018self, and rotary position embeddings by @su2021roformer.

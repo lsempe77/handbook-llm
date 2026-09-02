@@ -1,0 +1,262 @@
+---
+title: "Pretraining Data, Objectives, and Scale"
+subtitle: "What a base language model is trained to predict, and what the training run can support"
+---
+
+## Chapter orientation
+
+### Why this chapter matters
+
+Next-token prediction defines a loss over token sequences. It does not define which sequences enter training, how they are filtered and sampled, how many are processed, or how model capacity and compute are allocated. Those decisions determine the distribution a base model is fitted to and the evidence available for claims about its behaviour.
+
+Pretraining trains a model on broad corpora using a self-supervised objective. A base model learns conditional regularities in that constructed stream. It does not independently verify text, acquire a stable instruction policy, or guarantee suitable completions. This chapter separates corpus construction, objective choice, scale, and reproducibility. Chapter 29 turns to instruction tuning; Chapter 34 turns to evaluation.
+
+### Learning objectives
+
+By the end of this chapter, you should be able to:
+
+- distinguish a corpus, sampled training stream, token budget, and optimisation run;
+- explain why provenance, filtering, deduplication, and mixture weights affect a base model;
+- compare causal, masked, and sequence-to-sequence pretraining objectives;
+- account for parameters, training tokens, batch size, steps, and compute;
+- interpret scaling-law findings under their measured conditions; and
+- specify a reproducible pretraining record.
+
+### Running example
+
+Suppose a training stream mixes public web text, reference material, code, and curated multilingual material. Source size does not determine exposure: sampling weights and repetitions determine which tokens enter optimiser updates.
+
+```{python}
+#| label: fig-data-stream
+#| fig-cap: "A pretraining run samples tokenised documents from a specified mixture before batching them into an objective and optimiser loop."
+#| fig-alt: "Four named data sources feed through a weighted sampler and tokenizer into batches, model loss, and parameter updates."
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle, FancyArrowPatch
+plt.style.use("seaborn-v0_8-whitegrid")
+blue,teal,orange,purple,grey="#24527a","#3a9188","#d97745","#7655a6","#5f6b76"
+fig,ax=plt.subplots(figsize=(10,3.6)); ax.axis("off")
+for i,(label,c) in enumerate([("web",blue),("reference",teal),("code",orange),("multilingual",purple)]):
+    y=2.7-i*.55; ax.add_patch(Rectangle((.25,y),1.5,.35,facecolor=c,edgecolor="white")); ax.text(1,y+.175,label,ha="center",va="center",color="white"); ax.add_patch(FancyArrowPatch((1.78,y+.175),(2.45,1.6),arrowstyle="-|>",color=grey,mutation_scale=10))
+for x,label,c in [(2.55,"weighted\nsampler",grey),(4.55,"tokeniser",teal),(6.25,"batches",orange),(7.95,"model, loss,\nupdate",blue)]:
+    ax.add_patch(Rectangle((x,1.28),1.35,.65,facecolor=c,edgecolor="white")); ax.text(x+.675,1.6,label,ha="center",va="center",color="white",fontsize=9)
+for x in [3.95,5.85,7.55]: ax.add_patch(FancyArrowPatch((x,1.6),(x+.52,1.6),arrowstyle="-|>",color=grey,mutation_scale=10))
+ax.text(5.2,.55,"The sampled stream, not a source list alone, defines exposure during training.",ha="center",color=grey); ax.set_xlim(0,9.7); ax.set_ylim(.3,3.2); plt.show()
+```
+
+::: {.concept-box .concept-core #concept-pretraining data-term="Pretraining" data-domain="Large language models"}
+**Pretraining.** Training a base model on a large token stream under a stated prediction objective. Its claims depend on the corpus, data mixture, token budget, architecture, optimiser, and held-out evaluation record.
+:::
+
+## Level 1 - Intuition
+
+### Training data are constructed, not simply collected
+
+Pretraining corpora are assembled through collection, access and licensing choices, parsing, filtering, deduplication, language identification, document segmentation, tokenisation, and sampling. Each operation changes the sequence distribution on which the loss is minimised. Calling this material “internet data” conceals choices that affect coverage and exclusion.
+
+Public web text differs from books, scientific literature, code repositories, private correspondence, and spoken language. Availability determines whose writing enters the source pool. A filter can remove spam and repeated pages while also removing low-resource languages, unusual formatting, or text misclassified by a quality system. These are properties of a pipeline to document and test, not background noise.
+
+```{python}
+#| label: fig-mixture-weights
+#| fig-cap: "Sampling weights can give a smaller source a larger share of processed training tokens than its raw corpus size."
+#| fig-alt: "Paired bars compare raw source share and sampled token share for web, reference, code, and multilingual data."
+names=["web","reference","code","multilingual"]
+raw=np.array([65,15,12,8]); sampled=np.array([45,20,20,15]); x=np.arange(4); w=.36
+fig,ax=plt.subplots(figsize=(8,4)); ax.bar(x-w/2,raw,w,label="raw source share",color=blue); ax.bar(x+w/2,sampled,w,label="sampled token share",color=teal); ax.set_xticks(x,names); ax.set_ylabel("per cent (illustrative)"); ax.legend(); ax.set_title("Source size and training exposure can differ"); plt.tight_layout(); plt.show()
+```
+
+The values are illustrative. The point is that a data card needs both raw source quantities and mixture policy. Oversampling a smaller collection can give it substantial gradient influence. Repeating a source also raises the importance of removing exact and near duplicates.
+
+### Self-supervision supplies targets from text
+
+Causal pretraining uses earlier tokens to predict the next token. The stored sequence supplies the target after tokenisation and shifting, without a separate human label for each prediction. This allows large-scale training, but the objective inherits the corpus's errors, omissions, conventions, and correlations.
+
+Masked-language objectives hide selected units and predict them using left and right context. Sequence-to-sequence objectives predict a target sequence from a corrupted or transformed source. These objectives expose different information boundaries and fit different model architectures. They are not interchangeable descriptions of “learning language”.
+
+```{python}
+#| label: fig-objective-boundaries
+#| fig-cap: "Causal, masked, and sequence-to-sequence pretraining expose different context when predicting targets."
+#| fig-alt: "Three rows show causal left context, a masked token with both-sided context, and a corrupted source mapped to a target sequence."
+fig,axes=plt.subplots(3,1,figsize=(9,4.2))
+rows=[("causal",["the","cat","?"],[blue,blue,orange]),("masked",["the","[mask]","slept"],[teal,orange,teal]),("seq2seq",["corrupted","→","target"],[purple,grey,orange])]
+for ax,(name,pieces,cols) in zip(axes,rows):
+    ax.axis("off"); ax.text(.02,.5,name,weight="bold",color=grey,transform=ax.transAxes)
+    for i,(p,c) in enumerate(zip(pieces,cols)):
+        x=.2+i*.23; ax.add_patch(Rectangle((x,.23),.19,.54,facecolor=c,edgecolor="white")); ax.text(x+.095,.5,p,ha="center",va="center",color="white",fontsize=8)
+plt.tight_layout(); plt.show()
+```
+
+## Level 2 - Data mechanics
+
+### A corpus record needs more than a headline token count
+
+A reproducible account identifies sources and dates, access conditions, document and token counts, language and domain labels, filtering rules, deduplication method, personally identifiable information policy, and held-out splits. It distinguishes raw collection from retained documents and from the final sampled stream. If sources cannot be fully disclosed because of privacy, licensing, or access restrictions, that limitation should be stated rather than replaced with an imprecise label.
+
+Deduplication is consequential. Exact removal identifies identical records; near-duplicate removal depends on a similarity rule and threshold. It may retain templated copies or remove legitimate repetition. Evaluation contamination occurs when benchmark items or close variants enter training. A contaminated score does not estimate performance on unseen instances alone.
+
+```{python}
+documents=["A short report on water quality.","A short report on water quality.","A short report on water-quality.","Different document."]
+unique=list(dict.fromkeys(documents))
+print("raw:",len(documents),"exact-unique:",len(unique))
+print("near duplicates require a declared similarity rule")
+```
+
+### Tokens, batches, steps, and epochs count different things
+
+If a run processes \(T\) valid tokens with global batch size \(B\) tokens, it performs about \(T/B\) optimiser updates, subject to packing and gradient accumulation. An epoch means one pass through a defined finite dataset; it becomes ambiguous when a mixture is resampled or repeated.
+
+```{python}
+training_tokens=300_000_000_000
+global_batch_tokens=4_000_000
+steps=training_tokens/global_batch_tokens
+print(f"optimiser steps: {steps:,.0f}")
+```
+
+The token count depends on the tokenizer. A batch may be reported in sequences, examples, tokens, or tokens per device; these are not equivalent for variable lengths. A run record should give global valid tokens per update, maximum length, packing policy, accumulation steps, and total valid tokens processed.
+
+## Level 3 - Objectives and scale
+
+### Objective choice determines the prediction task
+
+A decoder-only causal objective predicts targets from a prefix. An encoder objective can form bidirectional representations for a complete input. An encoder-decoder objective predicts a causal target conditioned on a source. Chapter 23 established these architecture boundaries; pretraining selects the sequence task through which parameters are updated. Parameter count does not identify an objective.
+
+Loss weights can also change the effective data mixture. A run may weight sources, ignore selected targets, or normalise losses per sequence rather than per token. These choices alter gradient contributions and should be reported with the primary cross-entropy.
+
+```{python}
+losses=np.array([1.1,1.8,2.2])
+weights=np.array([.5,.3,.2])
+print("unweighted mean:",losses.mean())
+print("weighted mixture loss:",(losses*weights).sum())
+```
+
+### Scaling laws are fitted evidence, not a general capability law
+
+Scaling-law studies report regular relationships between held-out loss, parameter count, data, and training compute under specified training regimes [@kaplan2020scaling; @hoffmann2022training]. They inform planning inside those conditions. They do not establish that every capability, safety property, language, or benchmark will improve smoothly with size. Extrapolation depends on architecture, data, tokenisation, optimisation, and the range studied.
+
+```{python}
+#| label: fig-scaling-curve
+#| fig-cap: "A conceptual scaling curve shows diminishing held-out loss reductions as training compute rises; its fitted form applies only to its measured regime."
+#| fig-alt: "A downward curve plots illustrative validation loss against log training compute."
+compute=np.logspace(1,5,100); loss=1.0+2.2*compute**-.18
+fig,ax=plt.subplots(figsize=(7.5,4)); ax.plot(compute,loss,color=purple,lw=2.5); ax.set_xscale("log"); ax.set_xlabel("training compute (illustrative log scale)"); ax.set_ylabel("held-out loss (illustrative)"); ax.set_title("Diminishing loss reductions in a fitted regime"); plt.tight_layout(); plt.show()
+```
+
+Compute accounting needs more than parameters times tokens. Actual cost depends on sequence length, attention implementation, precision, communication, activation recomputation, failed runs, and hardware utilisation. Chapter 15 developed these systems distinctions. A pretraining report must connect them to data and objective budgets rather than provide a single uninterpretable compute headline.
+
+### Data repetition changes the meaning of a token budget
+
+A headline such as “trained on one trillion tokens” reports processing volume. It does not say how many distinct documents or unique token sequences were available. A smaller, repeatedly sampled corpus and a larger, more diverse corpus can yield the same processed-token count while exposing the model to different evidence. The difference affects both generalisation and memorisation risks. It also affects the interpretation of a scaling comparison: a run can receive more arithmetic without receiving proportionately more independent data.
+
+Repetition is not always an error. Curated code, mathematical text, or low-resource languages may be deliberately oversampled because raw availability would otherwise leave them nearly absent from the gradient stream. The required record is the sampling rule, the number of effective passes or repetitions, and the reason for the weighting. A report that lists source sizes but not exposure cannot establish whether a small source was protected, ignored, or repeatedly replayed.
+
+```{python}
+source_tokens=np.array([800,120,40])
+sampling_weights=np.array([.5,.3,.2])
+processed=1_000
+exposure=processed*sampling_weights/source_tokens
+for name,passes in zip(["web","reference","small curated"],exposure):
+    print(name,"illustrative expected passes:",round(passes,2))
+```
+
+The calculation uses a simplified fixed mixture. Real pipelines may sample documents, shards, or length-normalised examples; may replace exhausted sources; and may alter weights during a run. Those details belong in the training record because they define which losses contribute to parameter updates.
+
+### Validation needs an information boundary of its own
+
+Training and validation must be separated before duplicate handling and mixture construction are finalised. A random split at the document level can still leak closely related pages, translated versions, template variants, or consecutive records from one source. Time-based and source-based boundaries may be more appropriate when a model will be evaluated on later or distinct material. The appropriate rule depends on the claim, but the rule must be specified.
+
+For language-model loss, the validation stream should use the same tokenizer and objective convention as training. It should not silently use a different normalisation policy, maximum context, special-token treatment, or padding denominator. Source-stratified results can identify a mixture average that is dominated by common material and conceals poor fit on a smaller intended population.
+
+```{python}
+validation={"web":(10000,1.55),"reference":(3000,1.32),"multilingual":(2000,2.11)}
+weighted=sum(count*loss for count,loss in validation.values())/sum(count for count,_ in validation.values())
+print("aggregate loss:",round(weighted,3))
+print("source-specific losses:",validation)
+```
+
+The aggregate loss is useful for a declared mixture but cannot replace the rows from which it was calculated. A model intended for a multilingual or technical application requires validation evidence for those conditions. Holding out a generic sample of the same source pool is a narrower claim.
+
+### Scale has several bottlenecks
+
+Parameter count measures stored learned values, not the full resource requirement. Training tokens measure prediction events under a tokenizer, not the diversity or quality of documents. FLOP estimates measure arithmetic under assumptions, not the wall-clock cost of moving data and synchronising devices. Context length affects attention and activation memory. Batch size affects the number of updates for a fixed token budget and can interact with optimiser settings. These quantities should be reported together because changing one can change the useful allocation of the others.
+
+The compute-optimal results of Hoffmann and colleagues apply to their measured Transformer family, data, and training setup [@hoffmann2022training]. They provide evidence that model and data allocation matters under a compute budget. They do not provide a universal ratio that can be transferred without checking objective, data mixture, architecture, sequence length, and target deployment constraints. Scaling work is most useful when it leads to smaller controlled runs, documented extrapolations, and tests of the assumptions that support a large run.
+
+```{python}
+parameter_counts=np.array([1e8,1e9,1e10])
+token_budgets=np.array([2e9,2e10,2e11])
+for params,tokens in zip(parameter_counts,token_budgets):
+    print(f"parameters={params:.0e}, tokens={tokens:.0e}, tokens/parameter={tokens/params:.1f}")
+```
+
+### Base-model claims need proportionate language
+
+Pretraining can produce useful representations and conditional distributions across a wide range of text. It does not show that a system follows instructions, reports sources, abstains appropriately, protects private information, or remains reliable under a changed task distribution. Those behaviours require their own training, interface design, and evaluation. A report should therefore distinguish “the model was pretrained on” from “the deployed system was shown to do”.
+
+This distinction also prevents an opaque model scale claim from standing in for evidence. A model can be larger while having a narrower data mixture, a shorter context, a different objective, or less suitable evaluation. The relevant comparison begins with matched definitions and ends with tests that represent the intended use.
+
+## Level 4 - Audit and interpretation
+
+### A pretraining claim requires a data and run record
+
+An audit should record architecture and parameter count; tokenizer version; objective and target mask; source list and dates; filtering and deduplication procedures; mixture weights and resampling; raw, retained, and processed tokens; sequence and packing policy; batch and optimiser configuration; precision and hardware; checkpoints; validation construction; contamination checks; and stopping rule.
+
+```{python}
+run_record={"tokenizer":"versioned vocabulary","objective":"causal next-token","valid_tokens":300_000_000_000,"max_length":2048,"mixture":"documented weights"}
+required={"tokenizer","objective","valid_tokens","max_length","mixture"}
+assert required <= set(run_record)
+print("minimum run-record fields present")
+```
+
+Average validation loss can conceal failure on rare inputs, arithmetic, long contexts, low-resource languages, or tasks requiring external evidence. It is therefore one form of evidence alongside coverage analysis, contamination checks, memorisation testing, and task-specific evaluation. Optimising token-level likelihood does not resolve copyright, privacy, data-governance, or downstream reliability questions.
+
+```{python}
+#| label: fig-evidence-boundaries
+#| fig-cap: "Held-out loss is one form of evidence; coverage, contamination, memorisation, and downstream reliability need separate checks."
+#| fig-alt: "A held-out loss box is connected to boxes for coverage, contamination checks, memorisation tests, and task evaluation."
+fig,ax=plt.subplots(figsize=(9,3.4)); ax.axis("off")
+items=[("held-out\nloss",teal,3.6,1.45),("coverage",blue,.4,2.45),("contamination",orange,3.6,2.45),("memorisation",purple,6.8,2.45),("task evaluation",blue,3.6,.35)]
+for label,c,x,y in items: ax.add_patch(Rectangle((x,y),1.8,.48,facecolor=c,edgecolor="white")); ax.text(x+.9,y+.24,label,ha="center",va="center",color="white",fontsize=9)
+for dest in [(2.2,2.7),(4.5,2.45),(6.8,2.7),(4.5,.83)]: ax.add_patch(FancyArrowPatch((4.5,1.93),dest,arrowstyle="-|>",color=grey,mutation_scale=10))
+ax.set_xlim(0,9); ax.set_ylim(0,3.2); plt.show()
+```
+
+## Common misconceptions
+
+- **Pretraining data are a random sample of the web.** Collection, access, filtering, and sampling construct the training distribution.
+- **More raw documents mean more effective data.** Duplicates, mixture weights, tokenisation, and repetitions determine exposure.
+- **Self-supervision removes data-quality concerns.** It removes separate labels, not errors or exclusions in sequence data.
+- **A scaling law guarantees broad capability gains.** It describes measured loss relations under stated conditions.
+- **A low validation loss rules out contamination.** Contamination needs direct checks against the relevant evaluation material.
+
+## Exercises
+
+1. Distinguish raw corpus, retained corpus, and sampled token stream.
+2. Explain how a smaller source can receive more exposure than a larger source.
+3. Calculate steps for a token budget and global token batch size.
+4. Compare exact and near-duplicate removal.
+5. Explain why contamination changes a benchmark score's interpretation.
+6. Draw causal and masked objective information boundaries.
+7. Give an example of a source-stratified validation slice.
+8. Calculate a weighted loss from supplied component losses.
+9. State why parameter count does not identify a training objective.
+10. List four costs omitted by a simple parameter-times-token estimate.
+11. Explain why epoch count may be ambiguous under resampling.
+12. Design a test for document-boundary leakage in packed sequences.
+13. Identify a data decision that can affect a low-resource language.
+14. State why held-out loss and task performance are distinct evidence.
+15. List the metadata needed to interpret a reported pretraining loss.
+16. Identify the chapter that treats finite inference contexts.
+
+## Summary
+
+Pretraining fits a model to a constructed stream of token sequences under a specified objective. Source collection, filtering, deduplication, tokenisation, mixture weights, document boundaries, token budget, model capacity, and compute all affect the resulting base model.
+
+Scaling findings help plan work within their measured regimes, but they do not replace documentation, contamination checks, coverage analysis, or targeted evaluation. [Chapter 27](27-context-windows-model-inference.qmd) examines finite contexts and cache mechanics at inference; Chapter 29 examines supervised adaptation for instruction-following behaviour.
+
+## Looking ahead
+
+Pretraining produces a checkpoint under a finite token budget and an explicit data contract. [Chapter 27](27-context-windows-model-inference.qmd) turns to the different constraint at inference time: what information can fit into a request and what it costs the model to use it.
+
+## Further reading
+
+Scaling laws for language models are documented by @kaplan2020scaling. Compute-optimal allocation between parameters and training tokens is investigated by @hoffmann2022training. Dataset documentation principles are developed by @gebru2021datasheets.

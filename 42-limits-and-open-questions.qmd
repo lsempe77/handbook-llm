@@ -1,0 +1,235 @@
+---
+title: "Limits and Open Questions"
+subtitle: "Reward hacking, unreliable traces, verification gaps, and unresolved reasoning claims"
+---
+
+## Chapter orientation
+
+### Why this chapter matters
+
+Part V has described systems that generate more candidates, verify outcomes, revise proposals, search partial states, learn from rewards, and distil slower teachers. These mechanisms can improve defined tasks. They also create stronger incentives to optimise proxies, hide uncertainty, overfit benchmarks, and interpret a visible trace as evidence it does not provide.
+
+This chapter identifies the limits that remain after the mechanisms are specified. The aim is not to dismiss reasoning systems, but to keep claims tied to evidence, task distributions, resource budgets, and known failure modes.
+
+### Learning objectives
+
+By the end of this chapter, you should be able to:
+
+- identify reward-hacking and verifier-gap risks;
+- distinguish answer correctness, process quality, and trace faithfulness;
+- explain why benchmark gains may not generalise;
+- state open questions about hidden computation and process supervision; and
+- write a bounded reasoning-system claim.
+
+::: {.concept-box .concept-core #concept-proxy-limit data-term="Proxy limit" data-domain="Reasoning models"}
+**Proxy limit.** A proxy is a measurable signal used to guide a decision when the intended outcome is not directly observed. Optimising it can improve the proxy while leaving the intended outcome unchanged or worse.
+:::
+
+::: {.concept-box .concept-distinction #concept-proxy-outcome data-term="Measured proxy and intended outcome" data-domain="Reasoning models"}
+**Measured proxy and intended outcome.** A measured proxy records the property a scorer actually observes. An intended outcome is the task property the system is meant to support. Their relation is an empirical claim requiring independent tests.
+:::
+
+## Level 1 - Limits follow from the training signal
+
+### A proxy can be optimised without solving the intended task
+
+Rewards, learned judges, automatic verifiers, and benchmark metrics are signals. They simplify a broader task into a measurable condition. A policy can improve the signal while exploiting a loophole, selecting an easy subset, or producing an answer that looks appropriate to the evaluator. The more aggressively a system is optimised against a proxy, the more independent evaluation matters.
+
+The relevant question is always which task property the proxy actually observes. An exact arithmetic checker observes a narrow but useful property. A learned judge may observe style, answer format, or agreement with its own training labels in addition to the intended property. A benchmark score observes performance on its item set and interface. The audit should name this measurement boundary before interpreting an optimisation gain.
+
+### Proxy audits need deliberate abuse cases
+
+A reward audit should construct cases that satisfy the observable condition while failing the intended task, then test whether the system receives reward or selection preference. For a parser, vary equivalent answer forms, malformed delimiters, and extraneous text. For a source-based response, test irrelevant citations, outdated sources, and claims that cite a source without being entailed by it. For a learned judge, include confident but false answers and unusual but valid answer forms. The purpose is to map the proxy's known blind spots before a policy is trained aggressively against it.
+
+Record the exploit family, the expected task judgement, the proxy result, and the mitigation or residual risk. A mitigation can close one loophole while opening another or changing the distribution of accepted outputs. The independent test must remain outside the optimisation loop; otherwise the policy can learn the revised test rather than the intended task. This is the same distinction between a verifier's score and the outcome it is supposed to indicate that motivates verifier-guided evaluation [@cobbe2021training].
+
+```{python}
+cases=[{"reward":1,"task_success":1,"description":"valid solution"},{"reward":1,"task_success":0,"description":"verifier loophole"}]
+for case in cases: print(case)
+```
+
+```{python}
+#| label: fig-proxy-gap
+#| fig-cap: "A reward or verifier is a measured proxy for a task; optimisation can improve the proxy while leaving the intended outcome unchanged or worse."
+#| fig-alt: "A policy update points to a high proxy score and separately to a task outcome that may differ."
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle, FancyArrowPatch
+fig,ax=plt.subplots(figsize=(8,3)); ax.axis("off")
+for x,label,c in [(.4,"policy\nupdate","#24527a"),(2.7,"proxy score","#d97745"),(5.2,"task\noutcome","#3a9188")]: ax.add_patch(Rectangle((x,1.2),1.5,.6,facecolor=c,edgecolor="white")); ax.text(x+.75,1.5,label,ha="center",va="center",color="white")
+ax.add_patch(FancyArrowPatch((1.95,1.5),(2.65,1.5),arrowstyle="-|>")); ax.add_patch(FancyArrowPatch((4.25,1.5),(5.15,1.5),arrowstyle="-|>")); ax.text(4.3,.55,"Measure both; do not infer one from the other.",ha="center"); plt.show()
+```
+
+```{python}
+#| label: fig-proxy-audit
+#| fig-cap: "A proxy audit records the intended task property, what the reward or verifier observes, plausible loopholes, and the independent evidence needed to test them."
+#| fig-alt: "A four-column table lists intended property, observed proxy, loophole, and independent check for three illustrative systems."
+rows=[["numeric answer","exact parser","unsupported answer form","alternative parser"],
+      ["useful plan","learned judge","confident wording","expert review"],
+      ["grounded response","citation check","irrelevant citation","source entailment"]]
+fig,ax=plt.subplots(figsize=(10,2.8)); ax.axis("off")
+table=ax.table(cellText=rows,colLabels=["intended property","observed proxy","possible loophole","independent check"],loc="center",cellLoc="left")
+table.auto_set_font_size(False); table.set_fontsize(8); table.scale(1,1.55)
+ax.set_title("Illustrative proxy-audit record",pad=12); plt.show()
+```
+
+## Level 2 - Trace and verification limits
+
+### Visible steps are not a complete account of computation
+
+A natural-language rationale may be useful for checking an arithmetic step or communicating an answer. It can also be incomplete, post-hoc, or selected for readability. Hidden computation cannot be inspected directly by a user. Neither condition justifies an invented explanation. Faithfulness remains an intervention question: does changing the proposed explanatory element change the relevant computation or outcome in the predicted way?
+
+```{python}
+trace_test={"trace_plausible":True,"answer_correct":False,"faithfulness_established":False}
+print(trace_test)
+```
+
+Verification has a parallel limit. Exact verifiers are strong where the specification is complete. Many real tasks have incomplete rules, ambiguous objectives, or evidence that changes over time. A system should state which condition it checked and which it did not.
+
+Verification should therefore be treated as a component with coverage. A program test can establish that a submitted program passes listed cases, not that it satisfies every unstated requirement. A source checker can establish that a citation is present, not that it supports the claim. When the specification is partial, an accepted result should be described as accepted under the stated test, and independent cases should target the most plausible omissions.
+
+### A verifier also has false acceptance, false rejection, and abstention behaviour
+
+Coverage is not enough to describe a verifier. A verifier can accept an invalid candidate, reject a valid one, fail to parse an answer, time out, or abstain because the property cannot be checked. These outcomes affect both training and deployment. False acceptance can teach or return an error; false rejection can remove a rare correct candidate from search or distillation; an unrecorded abstention can make an accepted-only accuracy statistic appear stronger than the actual system outcome.
+
+Evaluate the verifier on labelled cases that include its expected operating distribution and likely adversarial or out-of-format cases. Report error rates by task slice and state the policy for unverified candidates: reject, defer, request another candidate, route to review, or return a bounded response. Process-supervision work highlights a related limitation: adding intermediate evaluation creates another judge whose validity requires separate evidence [@lightman2023lets].
+
+```{python}
+#| label: fig-verification-coverage
+#| fig-cap: "Verification can strongly establish a declared condition while leaving adjacent task properties outside its coverage."
+#| fig-alt: "Two overlapping circles show the intended task properties and the smaller subset checked by a verifier, with an uncovered region labelled."
+from matplotlib.patches import Circle
+fig,ax=plt.subplots(figsize=(6.5,4)); ax.axis("off")
+ax.add_patch(Circle((3.0,2.0),1.45,facecolor="#dce9f2",edgecolor=blue,alpha=.9)); ax.text(3.0,2.8,"intended task",ha="center",color=blue)
+ax.add_patch(Circle((2.45,1.75),.85,facecolor="#f4d9c9",edgecolor=orange,alpha=.9)); ax.text(2.45,1.75,"checked\ncondition",ha="center",fontsize=9)
+ax.text(4.15,1.3,"uncovered\nproperties",ha="center",color=grey); ax.set_xlim(1,5.2); ax.set_ylim(.3,3.6); plt.show()
+```
+
+## Level 3 - Evaluation and generalisation
+
+### Benchmark performance is conditional evidence
+
+Reasoning benchmarks can be contaminated, public, narrow, or susceptible to prompt and reward optimisation. A high score may establish performance on a well-defined test distribution while leaving open whether the system transfers to new variants, other languages, longer contexts, or tasks without an exact verifier. Refreshing item pools and retaining hidden holdouts help, but they do not replace task-specific deployment evaluation.
+
+Generalisation evidence has layers. A held-out split from the same generator tests one form of interpolation. Paraphrases, changed values, and new templates test declared surface invariances. A new task generator or deployment workflow tests a stronger transfer claim. These designs answer different questions and should not be reported as if they supplied the same evidence. Contamination checks likewise need a documented search procedure, data cutoff, and a decision about items with uncertain exposure.
+
+### Benchmark provenance and deployment evidence answer different questions
+
+A benchmark record should identify its item source, generator or collection process, publication date, answer interface, scoring rule, access conditions, and the model-development activities that could have exposed the system to it. These fields do not prove that contamination is absent. They make the exposure claim inspectable and identify which items need replacement or separate reporting. Broad language-model evaluations illustrate why a single aggregate score must be read through its scenarios and measurement choices [@liang2022holistic].
+
+Deployment evidence begins where the benchmark ends. It records the incoming task distribution, tool availability, user-facing constraints, route or abstention policy, resource budget, and observed failures after release. A model can score well on a static test and still fail because its inputs arrive in a different format, its sources are stale, or a downstream decision requires a property the benchmark did not score. These are not exceptions to evaluation; they define the scope of the system claim.
+
+```{python}
+#| label: fig-claim-boundary
+#| fig-cap: "A benchmark score supports a claim about its measured task and interface; extending the claim to new tasks or environments requires new evidence."
+#| fig-alt: "A benchmark box supports a narrow tested-domain claim, while arrows to deployment domains are marked as requiring additional evidence."
+fig,ax=plt.subplots(figsize=(8,3.2)); ax.axis("off")
+ax.add_patch(Rectangle((.5,1.35),2.1,.6,facecolor="#7655a6",edgecolor="white")); ax.text(1.55,1.65,"benchmark result",ha="center",va="center",color="white")
+ax.add_patch(Rectangle((3.4,1.35),1.9,.6,facecolor="#3a9188",edgecolor="white")); ax.text(4.35,1.65,"tested claim",ha="center",va="center",color="white")
+ax.add_patch(Rectangle((5.9,1.35),1.6,.6,facecolor="#d97745",edgecolor="white")); ax.text(6.7,1.65,"new domain",ha="center",va="center",color="white")
+ax.text(6.7,.8,"new evaluation required",ha="center",color="#d97745"); plt.show()
+```
+
+```{python}
+#| label: fig-evidence-layers
+#| fig-cap: "Reasoning claims require progressively stronger evidence as they move from a fixed benchmark to variants, new generators, and deployment settings."
+#| fig-alt: "A four-step staircase rises from held-out benchmark items to controlled variants, new task generators, and deployment evaluation."
+levels=["held-out\nitems","controlled\nvariants","new task\ngenerator","deployment\nevaluation"]
+fig,ax=plt.subplots(figsize=(8,3.7)); ax.axis("off")
+for i,label in enumerate(levels):
+    ax.add_patch(Rectangle((.4+i*1.85,.55+i*.42),1.45,.55,facecolor=[blue,teal,purple,orange][i],edgecolor="white")); ax.text(1.125+i*1.85,.825+i*.42,label,ha="center",va="center",color="white",fontsize=9)
+ax.text(4.0,2.75,"Broader claims require evidence beyond the fixed benchmark interface.",ha="center",color=grey)
+ax.set_xlim(0,8); ax.set_ylim(.2,3.2); plt.show()
+```
+
+### Generalisation estimates have uncertainty and failure concentration
+
+An observed difference across a benchmark or a controlled variant is an estimate from a finite set of items. Report the number of items, paired outcomes where systems are compared on the same cases, and uncertainty appropriate to the score. More importantly, inspect whether the difference is concentrated in one template, one answer format, one verifier condition, or a small number of high-cost errors. A stable aggregate can conceal a deployment-relevant slice that fails consistently.
+
+New task generators and deployment tests also need versioning. If an evaluation set is refreshed after a model failure, retain the earlier version and mark the change; otherwise later comparisons cannot distinguish a model improvement from an easier or differently composed test. The objective is not an immutable benchmark. It is a record of which evidence supported each system decision at the time it was made.
+
+## Level 4 - Open questions and responsible claims
+
+### The unresolved questions are empirical
+
+Open questions include how to measure whether a trace is faithful; how to train process supervision without rewarding a style; how to verify open-ended reasoning; how inference-time compute generalises across tasks; how to detect reward hacking before deployment; and how to compare systems with different hidden computation and costs. These questions require experiments with defined interventions and held-out tasks, not labels attached to outputs.
+
+An appropriate concluding claim names the task distribution, the mechanism, the comparison, the resource change, and the remaining uncertainty. For example, a result may show that a fixed candidate-and-verifier procedure improves exact accuracy on held-out problems from one generator at a stated token cost. It does not establish faithful visible reasoning, broad transfer, or a property of hidden computation unless those claims received separate evidence. This is a restriction on interpretation, not a reason to discard a measured result.
+
+### Hidden computation changes the evidence available to users and auditors
+
+A system may use internal activations, private tools, hidden tokens, or proprietary retrieval and still be evaluated on observable task outcomes, resources, and interfaces. What cannot be concluded is that a concise visible explanation faithfully reports the inaccessible computation. An organisation that withholds traces should state what record is retained for debugging, what an external evaluator can inspect, which failures can be reconstructed, and which claims remain untestable because the relevant state is unavailable.
+
+This is an accountability boundary. It does not require exposing every intermediate representation or confidential prompt. It does require that the system not substitute a polished rationale for an unavailable audit trail. Task outcomes, verifier decisions, tool-call status, budget exhaustion, and versioned policy changes can be recorded without claiming that they reveal the model's entire internal process.
+
+### Limits require a deployment decision, not only a disclosure
+
+An identified limit should change a system policy where the consequence warrants it. A verifier with poor coverage can trigger abstention or review for the uncovered class. A suspected reward exploit can pause a training update or remove the affected reward version. A trace that is useful for communication but not faithful should be labelled as an explanation or summary rather than evidence of the causal process. A benchmark that no longer reflects the workload should lose its role as the main release criterion.
+
+The decision record should identify the limit, the affected task slice, the monitoring signal, the action threshold, the owner, and the review date. This makes uncertainty operational. It also prevents a general warning about limitations from becoming a reason to leave known high-consequence failures without a response policy.
+
+Version the decision record with the model, verifier, tool, prompt, and deployment configuration it governs. A response policy that was adequate for one system can become invalid when any of those components changes.
+
+Review changes before they reach users, not only after incidents occur.
+
+### Open questions require a stated evidential path
+
+Each unresolved question should be converted into an experiment or monitoring obligation. Trace faithfulness requires a defined intervention and predicted outcome. Process supervision requires labelled step data, judge-error analysis, and a comparison with outcome-only feedback. Reward-hacking detection requires held-out abuse cases and independent outcomes. Claims about inference-time scaling require matched budgets, candidate dependence records, and task slices. Claims about general transfer require a new generator or deployment evaluation rather than another score on the same public item pool.
+
+The remaining uncertainty should be recorded when a system is deployed, not deferred to a final caveat. Name the unmeasured property, the evidence that would be needed, the consequence if the property fails, and the decision owner responsible for updating or limiting the system. That record connects the reasoning module to the deployment and safety questions developed in Part VI.
+
+```{python}
+#| label: fig-bounded-claim
+#| fig-cap: "A bounded reasoning-system claim links a measured result to its task, mechanism, comparison, resource budget, and explicit limits."
+#| fig-alt: "A central measured result is surrounded by five labelled fields: task, mechanism, comparison, resources, and unresolved limits."
+fig,ax=plt.subplots(figsize=(8,4)); ax.axis("off")
+ax.add_patch(Rectangle((3.0,1.65),2.0,.62,facecolor=purple,edgecolor="white")); ax.text(4.0,1.96,"measured result",ha="center",va="center",color="white")
+for x,y,label,c in [(0.6,2.7,"task",blue),(5.8,2.7,"mechanism",teal),(.6,.65,"comparison",orange),(5.8,.65,"resources",blue),(3.0,.35,"limits",orange)]:
+    ax.add_patch(Rectangle((x,y),1.6,.48,facecolor=c,edgecolor="white")); ax.text(x+.8,y+.24,label,ha="center",va="center",color="white",fontsize=9)
+ax.set_xlim(0,8); ax.set_ylim(0,3.5); plt.show()
+```
+
+```{python}
+claim={"task":"held-out verified problems","mechanism":"eight samples plus exact verifier","result":"higher accuracy at higher token cost","limit":"does not establish general reasoning"}
+print(claim)
+```
+
+## Common misconceptions
+
+- **A reasoning trace is a proof of reasoning.** It is output that needs its own evaluation.
+- **A verifier closes the evaluation problem.** It covers only its declared acceptance condition.
+- **Reward optimisation solves alignment.** It can optimise an incomplete proxy.
+- **A benchmark gain is a general capability claim.** It is evidence under a measured distribution.
+- **Hidden computation removes accountability.** Outcomes, resources, and system traces remain evaluable.
+
+## Exercises
+
+1. Give a reward-hacking example for a reasoning task.
+2. State one limit of an exact verifier.
+3. Design a trace-faithfulness intervention.
+4. Define the population for a bounded reasoning claim.
+5. List two open questions about process supervision.
+6. Explain why hidden computation changes, but does not remove, evaluation obligations.
+7. Design a deployment test outside a public benchmark.
+8. Identify a proxy and intended outcome in a supplied system.
+9. Write a conclusion with a stated scope limit.
+10. Distinguish a verifier's checked condition from an intended task property.
+11. Design an independent test for a stated verifier loophole.
+12. Compare evidence from a held-out split and a new task generator.
+13. State the information required for a contamination check.
+14. Write a bounded claim for a candidate-and-verifier system.
+15. Identify a claim about trace faithfulness that the available evidence would not support.
+16. Summarise the Part V mechanism sequence.
+
+## Summary
+
+Reasoning systems can improve defined outcomes through search, verification, reward learning, and distillation. Their limits arise from proxy optimisation, incomplete verifiers, unreliable traces, narrow benchmarks, and unobserved computation. Claims should remain tied to the task, mechanism, evaluation, cost, and known gaps.
+
+Part VI turns to modern AI systems: mixture-of-experts models, vision and diffusion architectures, multimodality, scaling, deployment, and safety.
+
+## Looking ahead
+
+Part VI moves from reasoning methods to modern model and deployment systems. [Chapter 43](43-mixture-of-experts-models.qmd) begins with sparse conditional computation, where capacity, routing, and systems cost must be assessed together.
+
+## Further reading
+
+The evaluation principles in Chapters 34 and 36 provide the appropriate basis for investigating these open questions.

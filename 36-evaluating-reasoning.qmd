@@ -1,0 +1,249 @@
+---
+title: "Evaluating Reasoning"
+subtitle: "Outcomes, processes, verifiers, robustness, and inference-time cost"
+---
+
+## Chapter orientation
+
+### Why this chapter matters
+
+Chapter 35 defined reasoning systems through additional computation, search, decomposition, and verification. An evaluation must now determine whether those mechanisms improve the intended task and at what cost. A correct final answer is useful evidence, but it cannot show whether a visible trace was faithful, whether a verifier was valid, whether the gain survives prompt variation, or whether more inference-time compute is worth its latency and expense.
+
+Reasoning evaluation should therefore retain outcome, process, and systems measures. The relevant criterion depends on the task. Exact arithmetic permits an exact verifier; open-ended planning requires another source of evidence. Chapter 37 will compare accuracy against inference-time computation, using the measurement contract established here.
+
+### Learning objectives
+
+By the end of this chapter, you should be able to:
+
+- distinguish outcome, process, verifier, robustness, and systems evaluation;
+- define an exact verifier and state its scope;
+- calculate outcome accuracy and verifier precision or recall on a toy set;
+- explain why a plausible trace is not evidence of faithfulness;
+- design prompt- and problem-variant robustness tests;
+- report accuracy together with samples, tokens, calls, latency, and cost; and
+- build a trace that separates candidate, verifier, selection, and final-answer errors.
+
+### Running task
+
+The running task has a checkable answer. The system generates candidate solutions, applies a verifier, and selects one result. This permits separate measurements of candidate coverage, verifier behaviour, and final accuracy.
+
+```{python}
+#| label: fig-reasoning-evaluation-stack
+#| fig-cap: "Reasoning evaluation separates candidate generation, verifier decisions, selected answers, outcome scoring, and inference-time resource records."
+#| fig-alt: "A pipeline flows from a task to candidates, verifier, selection, outcome score, and a parallel cost record."
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle, FancyArrowPatch
+plt.style.use("seaborn-v0_8-whitegrid")
+blue,teal,orange,purple,grey="#24527a","#3a9188","#d97745","#7655a6","#5f6b76"
+fig,ax=plt.subplots(figsize=(10,3.5)); ax.axis("off")
+for x,label,c in [(.25,"task",blue),(1.8,"candidates",teal),(3.55,"verifier",orange),(5.3,"selection",purple),(7.05,"outcome\nscore",blue)]: ax.add_patch(Rectangle((x,1.35),1.3,.58,facecolor=c,edgecolor="white")); ax.text(x+.65,1.64,label,ha="center",va="center",color="white",fontsize=9)
+for x in [1.58,3.33,5.08,6.83]: ax.add_patch(FancyArrowPatch((x,1.64),(x+.2,1.64),arrowstyle="-|>",color=grey,mutation_scale=11))
+ax.text(4.8,.55,"Record tokens, samples, calls, latency, and cost alongside task outcomes.",ha="center",color=grey); ax.set_xlim(0,9); ax.set_ylim(.2,2.3); plt.show()
+```
+
+::: {.concept-box .concept-core #concept-verifier data-term="Verifier" data-domain="Reasoning models"}
+**Verifier.** A procedure that evaluates a candidate answer or process against a stated rule. Its usefulness depends on coverage, false acceptance, false rejection, abstention, and the decision made from its output.
+:::
+
+::: {.concept-box .concept-distinction #concept-verifier-errors data-term="False acceptance and false rejection" data-domain="Reasoning models"}
+**False acceptance and false rejection.** False acceptance occurs when a verifier approves an incorrect candidate. False rejection occurs when it rejects a correct one. Their costs depend on the task and determine whether a threshold or abstention route is appropriate.
+:::
+
+## Level 1 - Intuition
+
+### A final answer is necessary but incomplete evidence
+
+For a task with one exact answer, outcome accuracy asks whether the selected result is correct. This is often the primary metric. It does not show whether the system used a valid method, whether a visible rationale was accurate, whether a tool call succeeded, or whether the same result would survive a modest change in wording.
+
+A reasoning system may produce a correct answer through a lucky candidate, a memorised pattern, an external tool, or a verified search process. These mechanisms have different implications for generalisation and cost. Evaluation should not claim more than the measure supports.
+
+```{python}
+outcomes=np.array([1,1,0,1,1,0,1,1])
+print("outcome accuracy:",outcomes.mean(),"items:",len(outcomes))
+```
+
+### Outcome measures need a denominator and an error record
+
+Accuracy is the proportion of scored items for which the selected answer meets the stated criterion. It is only interpretable with its denominator: the task version, number of items, inclusion and exclusion rules, answer normalisation, and treatment of abstentions, timeouts, and tool failures. A system that abstains on unverified cases can appear more accurate if those cases are removed from the denominator. Report coverage alongside accuracy, and state whether an abstention is counted as incorrect, deferred, or outside the task.
+
+Aggregate accuracy also compresses different errors. A candidate generator may never produce a valid answer; a verifier may reject the valid candidate; a selector may choose an inferior accepted candidate; an answer parser may score a correct response as wrong. Retaining these boundaries identifies which component changed after a revision. It also prevents a later chapter from interpreting an accuracy gain as evidence that the generator improved when the gain came from a more permissive answer parser.
+
+### Process text and process evidence are different
+
+A visible chain of steps can be checked for local arithmetic or logical consistency. It may still omit the operation that determined the answer, contain a post-hoc explanation, or lead to a different answer after a small intervention. Process evaluation is useful when steps are observable and a task supplies criteria for them. It should not be treated as a general window into latent computation.
+
+```{python}
+#| label: fig-outcome-process
+#| fig-cap: "Outcome correctness, visible process quality, and faithfulness of a trace are separate evaluation targets."
+#| fig-alt: "Three adjacent boxes label correct answer, locally valid visible steps, and faithful computation, with separate tests under each."
+fig,ax=plt.subplots(figsize=(8.5,3.4)); ax.axis("off")
+for x,label,c,test in [(.3,"correct\nanswer",blue,"outcome scorer"),(3.0,"valid visible\nsteps",teal,"step checks"),(5.7,"faithful\ntrace",orange,"intervention test")]:
+    ax.add_patch(Rectangle((x,1.45),1.9,.62,facecolor=c,edgecolor="white")); ax.text(x+.95,1.76,label,ha="center",va="center",color="white"); ax.text(x+.95,.9,test,ha="center",color=grey,fontsize=9)
+ax.set_xlim(0,8); ax.set_ylim(.4,2.5); plt.show()
+```
+
+## Level 2 - Verifiers and metrics
+
+### A verifier has a defined acceptance condition
+
+An exact verifier can check a numeric answer, proof syntax, executable code output, a formal constraint, or a known solution. Its value comes from a clearly specified condition. A verifier can be wrong, incomplete, vulnerable to formatting, or unable to assess the property that matters. A code test suite may accept an implementation that fails an untested case; a symbolic checker may reject a correct answer in an unsupported form.
+
+```{python}
+def exact_verifier(candidate,answer):
+    return candidate==answer
+print([exact_verifier(x,12) for x in [12,11,12,13]])
+```
+
+Verifier evaluation itself needs labelled cases. Precision asks how often accepted candidates are actually correct; recall asks how often correct candidates are accepted. A selector built on a low-precision verifier can choose attractive errors. A low-recall verifier can discard valid solutions and flatten the gain from candidate generation.
+
+```{python}
+accepted=np.array([1,1,1,0]); actually_correct=np.array([1,0,1,1])
+precision=(accepted & actually_correct).sum()/accepted.sum()
+recall=(accepted & actually_correct).sum()/actually_correct.sum()
+print("verifier precision:",round(precision,2),"recall:",round(recall,2))
+```
+
+```{python}
+#| label: fig-verifier-confusion
+#| fig-cap: "Verifier quality depends on accepted and rejected candidates relative to actual correctness; both false acceptance and false rejection affect selection."
+#| fig-alt: "A two-by-two confusion matrix labels accepted or rejected candidates against actually correct or incorrect candidates."
+matrix=np.array([[18,3],[4,25]])
+fig,ax=plt.subplots(figsize=(5,4)); im=ax.imshow(matrix,cmap="Blues"); ax.set_xticks([0,1],["actually correct","actually incorrect"]); ax.set_yticks([0,1],["accepted","rejected"])
+for i in range(2):
+    for j in range(2): ax.text(j,i,str(matrix[i,j]),ha="center",va="center",fontsize=14)
+ax.set_title("Verifier confusion matrix (illustrative)"); plt.tight_layout(); plt.show()
+```
+
+### Candidate coverage, verifier quality, and selection quality are separate quantities
+
+For a multi-candidate system, candidate coverage asks whether at least one generated candidate is correct. Verifier precision and recall ask whether the verifier classifies individual candidates accurately. Selection accuracy asks whether the final policy chooses a correct candidate from the candidates available. These measures identify different ceilings. Sampling cannot rescue a task when coverage remains low; a highly accurate verifier cannot help if no valid candidate is generated; a selector can still fail when several accepted candidates disagree.
+
+Report the measures on the same items and candidate sets. If a verifier is evaluated only on generated candidates, its score may differ from its score on deliberately constructed hard negatives or different answer formats. The difference is useful: it describes the verifier's operating distribution. Evaluation work on language models treats performance as conditional on the scenario, metric, and slice being measured, rather than as a single property of a model [@liang2022holistic].
+
+## Level 3 - Robustness and cost
+
+### Robustness tests vary a declared factor
+
+Reasoning claims should be tested under controlled variants: paraphrase the prompt while preserving the answer, alter irrelevant numbers or names, move evidence position, change the order of answer options, or generate new instances from a problem family. The purpose is to identify whether performance depends on surface cues rather than the relation the task is intended to measure.
+
+```{python}
+variants={"original":1,"paraphrase":1,"renamed variables":0,"reordered options":0}
+print("variant outcomes:",variants)
+```
+
+Robustness does not mean invariance to every transformation. A wording change can legitimately alter the problem. The evaluation must state which property is preserved and how variants were built. It should also avoid constructing variants after viewing the model's failures in a way that turns the test into an unreported development set.
+
+The unit of analysis should remain visible. Report the original and each variant as paired outcomes, rather than pooling them immediately into one score. A system that succeeds on the original item and fails whenever variable names change has a different failure pattern from one that fails randomly across variants, even when their pooled accuracy is the same. Paired records also show whether candidate generation, verification, or selection caused the difference.
+
+### Contamination is a provenance question
+
+Benchmark exposure can inflate an outcome score without showing that a system solves new instances. The relevant question is not whether an item appears verbatim in a public dataset alone. It is whether the training data, instruction data, demonstrations, retrieval index, prompt template, or evaluation-development process supplied information that makes the test easier. A reasoning benchmark can also become a development target through repeated prompting and manual inspection, even if the model checkpoint was trained earlier.
+
+Record the dataset version, item source, generation procedure, public availability date, benchmark access policy, and any overlap search or decontamination rule. When a task family permits it, use newly generated or held-out instances and keep the generator and answer key separate from the system-development loop. Established broad benchmarks demonstrate the value of specifying task categories and scoring conventions, but their scores remain tied to the particular item collection and answer format [@hendrycks2021measuring]. A contamination check cannot prove absence of all exposure; it can make the remaining uncertainty visible.
+
+```{python}
+#| label: fig-robustness-slices
+#| fig-cap: "Paired robustness results show whether reasoning-system failures concentrate in a declared prompt or problem variant rather than only changing the pooled score."
+#| fig-alt: "A grouped bar chart compares original, paraphrased, renamed-variable, and reordered-option accuracy for candidate generation and selected answers."
+variants=["original","paraphrase","renamed\nvariables","reordered\noptions"]
+candidate_acc=[.82,.79,.61,.67]; selected_acc=[.88,.83,.64,.70]
+x=np.arange(len(variants)); fig,ax=plt.subplots(figsize=(7.4,4))
+ax.bar(x-.18,candidate_acc,.36,label="candidate coverage",color=teal)
+ax.bar(x+.18,selected_acc,.36,label="selected-answer accuracy",color=purple)
+ax.set_xticks(x,variants); ax.set_ylim(0,1); ax.set_ylabel("accuracy")
+ax.legend(); ax.set_title("Illustrative paired robustness slices")
+plt.tight_layout(); plt.show()
+```
+
+### Accuracy must be paired with computation
+
+If a reasoning system samples ten candidates and calls a verifier ten times, its accuracy cannot be compared fairly with a one-pass answer without reporting the additional tokens, calls, latency, and cost. The relationship may be nonlinear: one extra sample can help substantially, while later samples add little. Chapter 37 will estimate such curves; this chapter establishes the shared denominator.
+
+Cost records also need a decision rule. Mean latency can conceal a long tail caused by retries, tool calls, or a search budget reached only for difficult prompts. State whether calls were parallel, whether failed calls count, the hardware or service configuration, and whether cost includes verification. These choices determine what a reported token or latency budget means in deployment.
+
+Comparisons also need uncertainty appropriate to the evaluation unit. When two systems answer the same items, retain their paired outcomes and report how many items changed from wrong to correct and from correct to wrong. A small average difference can be driven by a few cases, especially on a short benchmark or a rare but costly slice. Confidence intervals or resampling summaries can describe sampling uncertainty, but they do not repair an unrepresentative task set or an undeclared change in prompt policy.
+
+```{python}
+records=[{"n":1,"accuracy":.54,"tokens":180,"latency":.4},{"n":4,"accuracy":.68,"tokens":720,"latency":1.7},{"n":8,"accuracy":.72,"tokens":1440,"latency":3.3}]
+for row in records: print(row)
+```
+
+```{python}
+#| label: fig-accuracy-cost
+#| fig-cap: "Reasoning-system comparisons should report accuracy against a declared inference-time cost rather than accuracy alone."
+#| fig-alt: "A curve plots illustrative task accuracy against generated token budget for one, four, and eight candidates."
+tokens=np.array([180,720,1440]); accuracy=np.array([.54,.68,.72])
+fig,ax=plt.subplots(figsize=(7,4)); ax.plot(tokens,accuracy,marker="o",color=purple); ax.set_xlabel("generated-token budget"); ax.set_ylabel("task accuracy"); ax.set_ylim(.4,.8); ax.set_title("Illustrative accuracy-cost curve"); plt.tight_layout(); plt.show()
+```
+
+### Open-ended tasks require a scoring protocol, not an implied exact answer
+
+Some reasoning applications produce plans, explanations, or recommendations for which there is no single reference string. Evaluation then needs a rubric that states the required facts, constraints, source use, prohibited content, and treatment of uncertainty. Human assessment can judge properties that an exact verifier cannot, but it introduces assessor training, disagreement, order effects, and cost. Model-based judging adds another model with its own prompt, calibration, and failure modes.
+
+The protocol should specify who scores which outputs, whether assessors are blinded to system identity, how disagreements are resolved, and which cases require expert review. A rubric score should be reported by criterion and, where possible, alongside concrete error categories. This does not make an open-ended task exact. It permits claims about the property that was actually assessed and leaves the unassessed properties outside the conclusion.
+
+## Level 4 - Audit and interpretation
+
+### Faithfulness requires an intervention claim
+
+To claim that a visible trace explains an answer, an evaluation needs more than a correlation between plausible steps and correct answers. Interventions can alter, remove, reorder, or replace parts of the trace and test whether the answer changes in the predicted way. These tests are difficult because a model may regenerate a different trace, rely on hidden state, or answer from a shortcut. A negative result should be reported as a limit rather than repaired with a more persuasive explanation.
+
+```{python}
+trace_test={"original_answer":12,"altered_trace_answer":12,"expected_change":True}
+print("trace intervention supports claim:",trace_test["altered_trace_answer"]!=trace_test["original_answer"])
+```
+
+### A reasoning evaluation record joins components
+
+The audit should retain task generator or dataset version, answer key or verifier, prompt and template, checkpoint, candidate-generation policy, samples, selection rule, tool and verifier versions, visible-trace policy, token and call counts, latency, outcome scoring, robustness variants, contamination checks, and error categories. It should record whether an item was solved directly, through a verifier, or through a tool. This is the minimum needed to interpret an apparent reasoning gain.
+
+Evaluation should also distinguish a planned test from a diagnostic added after observing errors. Diagnostic slices are often useful, especially when a failure points to a specific parser, tool, or prompt condition. They should not be folded silently into a confirmatory headline score. Keep a development record, freeze the evaluation policy for the final comparison, and state which analyses were exploratory. The resulting account is less tidy than one number, but it permits another evaluator to reproduce the decision boundary.
+
+```{python}
+record={"task":"verifiable problems","generator":"v2","samples":8,"verifier":"exact-v1","selector":"first accepted","tokens":1440,"robustness":"paraphrase set"}
+assert {"task","samples","verifier","selector","tokens"} <= set(record)
+print("reasoning evaluation record complete")
+```
+
+## Common misconceptions
+
+- **A correct answer proves a correct reasoning process.** It does not identify the route that produced the answer.
+- **A verifier is objective by definition.** It has coverage, parsing, and implementation limits.
+- **A plausible rationale is a faithful explanation.** Faithfulness requires an intervention or another causal test.
+- **More samples can be compared without reporting cost.** Candidate count, tokens, calls, and latency change the system.
+- **Prompt robustness means invariant outputs under every rewording.** Variants need a declared preserved property.
+- **A reasoning benchmark rules out contamination.** Development and training exposure still require checks.
+
+## Exercises
+
+1. Define outcome, process, and faithfulness measures for a checkable task.
+2. Implement an exact verifier for a toy answer type.
+3. Calculate verifier precision and recall from a labelled set.
+4. Construct a case of false verifier acceptance.
+5. Design a paraphrase robustness test with a preserved answer.
+6. State why a prompt variant can be invalid.
+7. Draw an accuracy-cost curve for three candidate budgets.
+8. Separate a generation failure from a verifier failure in a trace.
+9. Propose an intervention test for a visible rationale.
+10. List fields required for a reasoning evaluation record.
+11. Explain why a final-answer reward can conceal process errors.
+12. Design a multi-step task where evidence must be retrieved from two sources.
+13. State how you would check contamination for a reasoning benchmark.
+14. Compare exact scoring and human evaluation for open-ended planning.
+15. Identify a cost measure other than token count.
+16. Identify the next chapter's inference-time scaling question.
+
+## Summary
+
+Reasoning evaluation needs outcome metrics, verifier diagnostics, robustness tests, faithfulness limits, and inference-time resource records. No single metric establishes all of these properties. A system should be evaluated at its candidate, verifier, selection, and final-answer boundaries under a declared task distribution.
+
+[Chapter 37](37-inference-time-scaling.qmd) uses this measurement framework to test when sampling, voting, and verification improve accuracy enough to justify their additional computation.
+
+## Looking ahead
+
+Reasoning evaluation makes the cost of additional computation observable. [Chapter 37](37-inference-time-scaling.qmd) examines how a fixed model can allocate that computation across candidates, verification, and search.
+
+## Further reading
+
+Process supervision and outcome supervision are compared by @lightman2023lets. Verifier-guided mathematical reasoning is studied by @cobbe2021training.

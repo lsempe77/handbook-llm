@@ -1,0 +1,231 @@
+---
+title: "Evaluating LLMs"
+subtitle: "Capability, reliability, contamination, and the limits of benchmark scores"
+---
+
+## Chapter orientation
+
+### Why this chapter matters
+
+An LLM evaluation produces evidence about a defined model or system under a defined input distribution, interface, scoring rule, and time. It does not produce a general scalar measure of intelligence, truthfulness, or fitness for every deployment. The same model can score differently after a template change, a decoding change, an index update, a tool change, or a contaminated test item.
+
+This chapter closes Part IV by treating evaluation as a design and measurement problem. It connects the earlier distinctions among token loss, instruction tuning, preference optimisation, inference, and RAG. Part V then turns to reasoning models and the additional question of how to evaluate multi-step computation.
+
+### Learning objectives
+
+By the end of this chapter, you should be able to:
+
+- distinguish a capability benchmark, a reliability test, a safety evaluation, and a system evaluation;
+- define the population, unit, interface, and scoring rule for an LLM evaluation;
+- calculate an accuracy estimate and a simple confidence interval;
+- explain contamination, prompt sensitivity, and benchmark overfitting;
+- separate model, retrieval, tool, and decoding failures in a system trace;
+- identify when aggregate scores conceal subgroup or task differences; and
+- specify an evaluation report that can be audited and reproduced.
+
+### Running evaluation
+
+The running test has labelled inputs, a fixed template, a checkpoint, a decoding policy, and an exact-match criterion. Changing any of these can change the reported score.
+
+```{python}
+#| label: fig-evaluation-contract
+#| fig-cap: "An LLM score is produced by a defined model and system interface, test set, decoding policy, and scoring procedure."
+#| fig-alt: "Model and system configuration, test items, decoding, and a scoring rule feed into a reported metric with an uncertainty interval."
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle, FancyArrowPatch
+plt.style.use("seaborn-v0_8-whitegrid")
+blue,teal,orange,purple,grey="#24527a","#3a9188","#d97745","#7655a6","#5f6b76"
+fig,ax=plt.subplots(figsize=(10,3.4)); ax.axis("off")
+for x,label,c in [(.25,"checkpoint +\ninterface",blue),(2.25,"test items\n+ labels",teal),(4.25,"decoding +\ntools",orange),(6.25,"scoring\nrule",purple),(8.2,"metric +\nuncertainty",blue)]: ax.add_patch(Rectangle((x,1.3),1.4,.62,facecolor=c,edgecolor="white")); ax.text(x+.7,1.61,label,ha="center",va="center",color="white",fontsize=9)
+for x in [1.68,3.68,5.68,7.68]: ax.add_patch(FancyArrowPatch((x,1.61),(x+.5,1.61),arrowstyle="-|>",color=grey,mutation_scale=11))
+ax.text(5,.55,"A score is conditional on the complete evaluation contract.",ha="center",color=grey); ax.set_xlim(0,9.8); ax.set_ylim(.2,2.3); plt.show()
+```
+
+::: {.concept-box .concept-core #concept-llm-evaluation data-term="LLM evaluation" data-domain="Large language models"}
+**LLM evaluation.** Measurement of a stated system interface on a defined task population and scoring rule. A benchmark score is conditional evidence, shaped by the model, prompt, decoding policy, data provenance, and development history.
+:::
+
+::: {.concept-box .concept-distinction #concept-benchmark-deployment data-term="Benchmark score and deployment claim" data-domain="Large language models"}
+**Benchmark score and deployment claim.** A benchmark score estimates performance on its items and interface. A deployment claim requires evidence about the intended users, inputs, consequence, and system configuration; it cannot be inferred from the benchmark alone.
+:::
+
+## Level 1 - Intuition
+
+### Scores answer bounded questions
+
+Exact accuracy on multiple-choice questions measures success on those items under the supplied prompt and answer extraction rule. A factuality evaluation measures a different property. A safety red-team, long-context retrieval test, code execution task, and human preference study each answer other questions. A broad evaluation programme may combine them, but their scores should not be collapsed into one claim without explaining the aggregation and the uses it represents.
+
+Benchmark choice defines which errors are visible. A test with short English questions can miss multilingual performance, tool failures, source use, refusal behaviour, latency, and long-document reliability. A test with a fixed answer key can be appropriate for a narrow capability while being unsuitable for an open-ended assistant response.
+
+```{python}
+items=[True,True,False,True,False,True,True,False,True,True]
+accuracy=np.mean(items)
+print("accuracy:",accuracy,"n:",len(items))
+```
+
+### Reliability requires repeated and varied evidence
+
+One successful answer does not estimate how often a system will succeed. Reliability concerns the distribution of outcomes across relevant inputs, including rare but consequential failures. For stochastic generation, the same input can yield different outputs. For tools and retrieval, external state can change. Evaluation should therefore record repetitions, seeds or sampling settings, versions, and the time at which an external collection was queried.
+
+```{python}
+#| label: fig-aggregate-and-slices
+#| fig-cap: "An aggregate score can conceal different performance across task or population slices, so evaluation should retain the component results."
+#| fig-alt: "A bar chart shows an overall score beside different scores for extraction, multilingual, and long-context slices."
+names=["overall","extraction","multilingual","long-context"]
+scores=[.72,.86,.61,.49]
+fig,ax=plt.subplots(figsize=(8,4)); ax.bar(names,scores,color=[grey,teal,orange,purple]); ax.set_ylim(0,1); ax.set_ylabel("score"); ax.set_title("Aggregate performance can hide task differences"); plt.tight_layout(); plt.show()
+```
+
+## Level 2 - Measurement mechanics
+
+### The unit and denominator determine a metric
+
+An accuracy denominator can be questions, examples, claims, generated tokens, tool calls, or complete episodes. These choices are not interchangeable. A system that answers one question with five claims may be correct on some claims and not others. A RAG system may retrieve a relevant document but fail the final answer. The report should state the unit, inclusion rule, missing-data rule, and whether an item can receive partial credit.
+
+For binary accuracy over \(n\) independent labelled units, a simple standard-error approximation is \(\sqrt{\hat p(1-\hat p)/n}\). It is not sufficient for clustered, repeated, or adaptively sampled data, but it shows why a score from a small test set has substantial uncertainty.
+
+```{python}
+p=.72; n=100
+se=np.sqrt(p*(1-p)/n)
+print("approximate 95% interval:",(round(p-1.96*se,3),round(p+1.96*se,3)))
+```
+
+```{python}
+#| label: fig-uncertainty-size
+#| fig-cap: "For a fixed observed accuracy, a larger evaluation set yields a narrower simple binomial uncertainty interval."
+#| fig-alt: "Error bars for accuracy 0.72 shrink as evaluation size rises from 25 to 400 items."
+sizes=np.array([25,100,400]); estimates=np.repeat(.72,3); errors=1.96*np.sqrt(estimates*(1-estimates)/sizes)
+fig,ax=plt.subplots(figsize=(7.5,4)); ax.errorbar(["25","100","400"],estimates,yerr=errors,fmt="o",color=teal,capsize=5); ax.set_ylim(.35,1); ax.set_ylabel("accuracy"); ax.set_xlabel("number of labelled items"); ax.set_title("Illustrative sampling uncertainty"); plt.tight_layout(); plt.show()
+```
+
+### Prompt and scorer choices are part of the treatment
+
+Few-shot examples, system messages, answer options, retrieval context, tool permissions, temperature, and output parsing can all change a score. The evaluation should freeze or systematically vary these choices rather than treating them as invisible plumbing. Automatic scorers should be validated on a labelled subset, particularly when judging open-ended answers, code, citations, or safety properties.
+
+```{python}
+predictions=["A","B","C","A"]
+labels=["A","B","B","A"]
+exact=[p==y for p,y in zip(predictions,labels)]
+print("exact-match score:",np.mean(exact),"errors:",[i for i,x in enumerate(exact) if not x])
+```
+
+## Level 3 - Contamination and system boundaries
+
+### Contamination changes the interpretation of benchmark performance
+
+If test items, answers, or close variants entered pretraining, fine-tuning, preference data, or prompt examples, benchmark performance can reflect prior exposure as well as generalisation. Exact-string searches are useful but insufficient because paraphrases, translated items, templates, and solutions can differ visibly while preserving the test content. A contamination policy should state search methods, source coverage, match thresholds, exclusions, and what score is reported when exposure is suspected.
+
+```{python}
+test_item="What is the eligibility rule?"
+training_texts=["Eligibility requires residence in the district.","What is the eligibility rule?","Other text"]
+matches=[text for text in training_texts if test_item.lower() in text.lower()]
+print("exact matches:",matches)
+```
+
+Contamination does not always make an evaluation useless, but it narrows the claim. A score may still measure retrieval from memorised material or performance under known exposure. It should not be presented as evidence of behaviour on unseen instances without a defensible boundary.
+
+### Evaluate complete systems at component boundaries
+
+An LLM application can include a model, prompt template, decoder, retriever, index, tools, output validator, and user interface. A final failure may originate in any of these. The evaluation trace should retain input tokens, retrieved IDs, tool calls and outputs, generated IDs, validator decisions, and the final displayed answer. This supports component-level measurements and repair.
+
+```{python}
+trace={"retrieval":"relevant chunk missed","tool":"not called","generation":"unsupported answer","validator":"passed"}
+print(trace)
+```
+
+```{python}
+#| label: fig-system-failure-trace
+#| fig-cap: "A complete-system evaluation traces failures across input construction, retrieval or tools, generation, validation, and final output."
+#| fig-alt: "A flow of user input through retrieval, context, generation, validation, and displayed output has failure labels at each stage."
+fig,ax=plt.subplots(figsize=(10,3.3)); ax.axis("off")
+for i,(label,c) in enumerate([("input",blue),("retrieve / tools",teal),("context",orange),("generate",purple),("validate",teal),("display",blue)]):
+    x=.15+i*1.62; ax.add_patch(Rectangle((x,1.35),1.2,.55,facecolor=c,edgecolor="white")); ax.text(x+.6,1.625,label,ha="center",va="center",color="white",fontsize=8)
+ax.text(4.9,.55,"Record stage outputs to locate failures rather than treating every error as a model error.",ha="center",color=grey); ax.set_xlim(0,10); ax.set_ylim(.2,2.3); plt.show()
+```
+
+## Level 4 - Evaluation design and reporting
+
+### Build an evaluation around a decision
+
+The intended decision should determine the test: whether to deploy a model version, select an adaptation, allow a tool action, use a retrieval corpus, or claim performance for a population. Define the target inputs, harm or cost of errors, baseline, required confidence, and stopping rule before inspecting the result. This prevents a convenient benchmark from becoming a proxy for a different deployment decision.
+
+```{python}
+evaluation_plan={"decision":"deploy retrieval update","population":"current policy queries","baseline":"index-v11","primary":"supported-answer rate","guardrail":"no access-control failures"}
+print(evaluation_plan)
+```
+
+### Report disaggregated evidence and limits
+
+An audit report should state model, tokenizer, prompt, decoding, tools and index versions; test construction and dates; item counts and strata; scoring and adjudication; uncertainty; contamination checks; excluded cases; failures; cost and latency; and known limits. Where human judgements are used, report judge instructions, information access, agreement, and aggregation. Where benchmarks are public, report whether they may have influenced development.
+
+```{python}
+#| label: fig-reporting-matrix
+#| fig-cap: "A credible LLM evaluation report links each claim to its population, interface, metric, uncertainty, contamination status, and known limits."
+#| fig-alt: "A table-like matrix lists required report fields: claim, population, system version, metric, uncertainty, contamination, and failures."
+fig,ax=plt.subplots(figsize=(9,3.5)); ax.axis("off")
+fields=["claim","population","interface","metric","uncertainty","contamination","failures"]
+for i,field in enumerate(fields):
+    x=.25+(i%4)*2.15; y=2.45-(i//4)*.85; ax.add_patch(Rectangle((x,y),1.8,.48,facecolor=[blue,teal,orange,purple][i%4],edgecolor="white")); ax.text(x+.9,y+.24,field,ha="center",va="center",color="white")
+ax.text(4.5,.45,"The report should make the scope of every performance claim inspectable.",ha="center",color=grey); ax.set_xlim(0,9); ax.set_ylim(.15,3.2); plt.show()
+```
+
+### Reliability includes calibration and failure concentration
+
+An evaluation can ask whether a model's expressed confidence or probability is related to correctness. Calibration is not solved by a single overall accuracy: a system may be reliable on routine examples and confidently wrong on one task slice. When a system does not expose calibrated probabilities, a proxy such as self-reported confidence, verifier score, or retrieval support should be treated as a separate predictor and evaluated against outcomes.
+
+Failure concentration also matters. Ten errors distributed across low-stakes formatting tasks have different implications from ten errors concentrated in access-control, medical, or financial cases. An evaluation report should preserve error categories and severity rules, rather than allowing a broad average to conceal the decision consequences of a rare failure.
+
+```{python}
+outcomes=[{"slice":"routine","correct":1,"confidence":.8},{"slice":"high-stakes","correct":0,"confidence":.95},{"slice":"routine","correct":1,"confidence":.7}]
+for row in outcomes: print(row)
+```
+
+### Benchmark development is itself an intervention
+
+Once a benchmark is public and used repeatedly for model selection, prompt design, data filtering, or reward design, its score can become a target. This can improve performance on the benchmark while narrowing the evidence it provides about unseen work. Held-out sets, refreshed item pools, task variants, and preregistered evaluation protocols can reduce this risk, but none removes the need to describe the development history.
+
+```{python}
+development={"public_benchmark_used_for_tuning":True,"hidden_holdout":True,"prompt_fixed_before_holdout":True}
+print(development)
+```
+
+## Common misconceptions
+
+- **A high benchmark score establishes general intelligence.** It measures performance under a specific evaluation contract.
+- **A single accuracy is enough for deployment.** Slice performance, uncertainty, reliability, cost, and failure consequences may differ.
+- **Public benchmarks are necessarily uncontaminated.** Development and training exposure require explicit assessment.
+- **A final wrong answer is always a model failure.** Retrieval, tools, prompts, validators, and interfaces can fail first.
+- **Automatic judging removes evaluation subjectivity.** It introduces a scorer model and its own validation requirements.
+- **More benchmarks automatically improve evidence.** They can duplicate a narrow distribution or encourage benchmark-specific optimisation.
+
+## Exercises
+
+1. Define the unit and denominator for a claim-level factuality metric.
+2. Calculate accuracy and a simple interval for a supplied outcome vector.
+3. Explain why clustered examples violate a simple independent-item interval.
+4. List the interface fields to freeze for a reproducible benchmark run.
+5. Design a slice analysis for multilingual assistance.
+6. Identify an exact contamination check and one limitation of it.
+7. Construct a trace for a RAG answer that retrieved the wrong chunk.
+8. Compare a capability benchmark with a reliability test.
+9. Specify an adjudication process for open-ended human scoring.
+10. State why aggregate scores can conceal deployment risk.
+11. Propose a guardrail metric for a tool-using system.
+12. Design a prompt-sensitivity experiment.
+13. List report fields needed for a public benchmark claim.
+14. Explain why a validator can create false assurance.
+15. Define a decision that an evaluation should support.
+16. Identify the first chapter of Part V and its new evaluation problem.
+
+## Summary
+
+LLM evaluation measures defined systems on defined tasks under defined interfaces. Capability scores, reliability studies, safety tests, retrieval evaluation, and service benchmarks provide different evidence. Strong reports retain the population, denominator, uncertainty, contamination policy, component trace, and known limits rather than reducing the system to one aggregate number.
+
+## Looking ahead
+
+[Chapter 35](35-what-makes-a-reasoning-model.qmd) begins Part V by distinguishing base models from reasoning-tuned models and examining what changes when systems are trained or prompted to use more computation on a problem.
+
+## Further reading
+
+Holistic evaluation categories and scenarios are developed by @liang2022holistic. The MMLU benchmark illustrates multi-task knowledge evaluation and its scope limits [@hendrycks2021measuring].

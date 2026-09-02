@@ -1,0 +1,239 @@
+---
+title: "What Makes a Reasoning Model?"
+subtitle: "Additional computation, search, verification, and the limits of visible traces"
+---
+
+## Chapter orientation
+
+### Why this chapter matters
+
+Language models can produce answers in one continuation, generate several candidate solutions, write intermediate steps, call a verifier, revise a proposal, or allocate more inference-time computation to difficult inputs. These behaviours are often grouped under “reasoning”, but they are not equivalent. A longer visible answer can be stylistic. A correct answer can result from retrieval or pattern completion. A system can perform substantial computation without exposing a faithful natural-language trace.
+
+This chapter uses an operational definition. A reasoning system uses multi-step computation, decomposition, search, verification, or extended inference in a way that can be evaluated against a task. The definition does not assume that a model has human-like reasoning or that its displayed steps reveal its causal internal process. Chapter 36 develops the evaluation problem; Chapters 37–40 develop inference-time scaling and training methods.
+
+### Learning objectives
+
+By the end of this chapter, you should be able to:
+
+- distinguish a base model, an instruction-tuned model, and a reasoning-tuned system;
+- distinguish visible rationale text, latent internal computation, and answer correctness;
+- identify generation, search, verification, decomposition, and tool use as separate mechanisms;
+- explain why longer outputs alone do not establish reasoning;
+- describe an inference-time computation budget and its cost; and
+- design a minimal trace that records candidates, checks, and answer selection.
+
+### Running problem
+
+The running problem asks for an answer with a checkable result. The system can produce one response, sample several candidates, verify them, and select an answer. Each added step consumes tokens, model calls, or tool computation.
+
+```{python}
+#| label: fig-reasoning-loop
+#| fig-cap: "A reasoning system can generate candidates, apply a verifier or selection rule, and return one answer under a finite inference-time budget."
+#| fig-alt: "A prompt flows to candidate generation, verification, selection, and answer, with a budget label spanning the loop."
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle, FancyArrowPatch
+plt.style.use("seaborn-v0_8-whitegrid")
+blue,teal,orange,purple,grey="#24527a","#3a9188","#d97745","#7655a6","#5f6b76"
+fig,ax=plt.subplots(figsize=(10,3.4)); ax.axis("off")
+for x,label,c in [(.3,"problem",blue),(2.05,"candidate\ngeneration",teal),(4.2,"verifier or\nselection",orange),(6.4,"selected\nanswer",purple)]: ax.add_patch(Rectangle((x,1.3),1.45,.62,facecolor=c,edgecolor="white")); ax.text(x+.725,1.61,label,ha="center",va="center",color="white",fontsize=9)
+for x in [1.78,3.78,5.98]: ax.add_patch(FancyArrowPatch((x,1.61),(x+.25,1.61),arrowstyle="-|>",color=grey,mutation_scale=11))
+ax.text(4.8,.55,"Tokens, samples, verifier calls, and latency are part of the reasoning-system budget.",ha="center",color=grey); ax.set_xlim(0,8.4); ax.set_ylim(.2,2.3); plt.show()
+```
+
+::: {.concept-box .concept-core #concept-reasoning-system data-term="Reasoning system" data-domain="Reasoning models"}
+**Reasoning system.** A model and procedure that allocates additional computation to candidates, search, verification, or refinement for a stated task. A visible rationale is an output record, not evidence by itself of the mechanism that produced a correct result.
+:::
+
+::: {.concept-box .concept-distinction #concept-trace-mechanism data-term="Visible trace and causal mechanism" data-domain="Reasoning models"}
+**Visible trace and causal mechanism.** A trace reports words or steps produced by a system. A causal mechanism is the intervention or computation that changes an outcome. Trace quality and task correctness require separate tests.
+:::
+
+## Level 1 - Intuition
+
+### Reasoning is a system property under a task definition
+
+A base model predicts a continuation from its prompt. Instruction tuning changes the response convention. A reasoning-tuned system may additionally be trained to produce intermediate work, reward verifiable outcomes, sample alternative solutions, or use more time before selecting an answer. The label should describe an observed mechanism and task result, not a marketing category.
+
+For an arithmetic expression, a model can answer immediately, write a calculation, generate several calculations and vote, or use a calculator tool. These may have different accuracy, token cost, and failure patterns. A system that calls a calculator can be reliable on arithmetic without demonstrating a general internal ability to reason about every task. A system that writes a long explanation can be incorrect despite a fluent trace.
+
+```{python}
+strategies={"direct":"one answer","rationale":"answer with steps","sample-and-select":"several candidates plus selection","tool-assisted":"external calculation"}
+for name,description in strategies.items(): print(name+":",description)
+```
+
+The operational claim needs a comparison condition. For the same prompt set, hold the base checkpoint, prompt template, tools, and answer format fixed, then vary the proposed reasoning mechanism. If a system samples eight candidates, the relevant baseline is not an unrelated model with a shorter answer. It is the same system with one candidate, or with the selector removed, measured under the same task distribution. This comparison can show whether the additional computation improves the outcome and whether the gain survives the cost it introduces.
+
+The task definition must also specify what counts as a correct answer. Arithmetic often has an exact target. A coding task may require tests, resource limits, and a declared execution environment. A factual answer can require source attribution and a date boundary. Open-ended advice has no general exact verifier. Calling all of these settings “reasoning” hides the fact that the available checks, the likely errors, and the appropriate resource budget differ.
+
+### Visible reasoning is not automatically faithful reasoning
+
+Chain-of-thought prompting asks a model to generate intermediate natural-language tokens before an answer. It can improve performance on some tasks [@wei2022chain]. The emitted text is still model output. It may be incomplete, post-hoc, strategically shaped by training, or unrelated to the internal features that caused the final answer. It should not be treated as a transparent record of all computation without a separate faithfulness test.
+
+The distinction matters in evaluation and deployment. A displayed rationale can help a person inspect arithmetic or source use. It can also create unwarranted confidence when the conclusion is unsupported. Some systems may use hidden or compressed intermediate computation and expose only an answer or summary. The appropriate evidence is task correctness, testable intermediate claims where relevant, and a documented system trace.
+
+```{python}
+#| label: fig-trace-and-faithfulness
+#| fig-cap: "A visible rationale, internal model computation, and answer correctness are related but distinct objects that require separate evaluation."
+#| fig-alt: "Three overlapping circles are labelled visible trace, internal computation, and correct answer, with no claim that any circle fully contains another."
+fig,ax=plt.subplots(figsize=(7,4)); ax.axis("off")
+for x,y,label,c in [(2.6,2.3,"visible\ntrace",blue),(4.3,2.3,"internal\ncomputation",teal),(3.45,1.25,"correct\nanswer",orange)]:
+    circle=plt.Circle((x,y),1.15,color=c,alpha=.35); ax.add_patch(circle); ax.text(x,y,label,ha="center",va="center",weight="bold")
+ax.set_xlim(1,6); ax.set_ylim(.1,3.8); plt.show()
+```
+
+## Level 2 - Mechanisms
+
+### Candidate generation and selection form a basic search loop
+
+Sampling several completions creates a candidate set. A selection rule can choose the highest model score, a majority answer, a verifier-approved candidate, or an externally checked result. The improvement, if any, comes from the combination of candidate diversity and a selection signal that distinguishes better from worse candidates. More samples without a useful selector can simply add cost and inconsistent answers.
+
+```{python}
+candidates=[{"answer":12,"valid":True},{"answer":13,"valid":False},{"answer":12,"valid":True}]
+valid=[c["answer"] for c in candidates if c["valid"]]
+print("selected answer:",max(set(valid),key=valid.count))
+```
+
+Decomposition divides a task into subproblems. Verification checks an answer, a step, or a constraint. Search chooses which partial solution to extend. Tool use delegates a defined operation to an external system. These mechanisms can be combined, but they should be named separately because they make different assumptions. A verifier that checks arithmetic cannot verify a legal interpretation; a decomposition can propagate an early mistaken subgoal.
+
+### A verifier has a domain, an error rate, and a decision role
+
+An exact verifier can compare a submitted expression with a known answer or run a program against a defined test suite. A learned verifier assigns a score from examples and can make the same systematic mistakes as the generator. A process verifier scores intermediate steps, while an outcome verifier scores a final result. These are different measurement instruments. Work on training verifiers for mathematical problems illustrates why candidate quality and verifier quality must be reported separately: a selector can only improve the candidate set when it can distinguish the better candidates in that set [@cobbe2021training].
+
+The decision rule matters as much as the score. A system may reject every candidate below a threshold, choose the highest-scoring candidate, request another sample, or defer to a person. A threshold selected on an easy development set can accept errors on a changed task distribution. A verifier that marks a valid answer as invalid produces a false rejection; one that approves an invalid answer produces a false acceptance. These errors have different consequences in a system that answers automatically and a system that uses verification only to route uncertain cases for review.
+
+The record should therefore identify the object checked, the verifier type, the threshold or selection rule, and the cases on which verification is unavailable. A claim that a model “checks its work” is not informative until those choices are visible.
+
+```{python}
+#| label: fig-mechanism-map
+#| fig-cap: "Generation, decomposition, search, verification, and tool use are distinct mechanisms that can be combined in a reasoning system."
+#| fig-alt: "A central problem connects to separate boxes for decomposition, candidate generation, search, verification, and tools."
+fig,ax=plt.subplots(figsize=(9,3.8)); ax.axis("off")
+ax.add_patch(Rectangle((3.7,1.55),1.5,.58,facecolor=blue,edgecolor="white")); ax.text(4.45,1.84,"problem",ha="center",va="center",color="white")
+for x,y,label,c in [(.3,2.8,"decompose",teal),(2.2,.45,"generate",orange),(5.6,.45,"search",purple),(7.3,2.8,"verify",teal),(7.3,1.3,"tools",orange)]: ax.add_patch(Rectangle((x,y),1.25,.5,facecolor=c,edgecolor="white")); ax.text(x+.625,y+.25,label,ha="center",va="center",color="white",fontsize=8)
+ax.set_xlim(0,9); ax.set_ylim(.1,3.6); plt.show()
+```
+
+### A budget makes the trade-off observable
+
+Inference-time compute can be counted as generated tokens, model forward passes, samples, verifier calls, tool calls, wall-clock time, energy, or monetary cost. These measures are related but not identical. A system may generate fewer tokens but make more expensive verifier calls, or use a long hidden trace with no user-visible explanation. An evaluation should report the resource definition alongside accuracy.
+
+```{python}
+budget={"samples":8,"tokens_per_sample":250,"verifier_calls":8,"latency_seconds":4.2}
+print("generated tokens:",budget["samples"]*budget["tokens_per_sample"])
+print(budget)
+```
+
+Budget reporting should be per request and across a workload. The mean number of sampled tokens can conceal a small set of difficult inputs that trigger repeated generation or expensive tools. A deployment record can report median and tail latency, the fraction of requests that use search or tools, failed verifier calls, and the policy for exhausting a budget. These fields allow a reader to distinguish a system that uses extra computation routinely from one that reserves it for a defined slice of requests.
+
+## Level 3 - Training and inference boundaries
+
+### Reasoning tuning changes a policy under selected signals
+
+Reasoning-oriented training may use demonstrations with intermediate steps, outcomes checked by a verifier, preference comparisons among solutions, or reinforcement learning over multi-step trajectories. The system learns from the data and reward signals available; it does not receive a general proof procedure. A reward based only on final answer can favour lucky or opaque trajectories. A process reward can favour steps that look plausible to its judge without guaranteeing they caused the result.
+
+```{python}
+trajectories=[{"steps":4,"answer_correct":1,"process_score":.7},{"steps":8,"answer_correct":0,"process_score":.9}]
+for t in trajectories: print(t)
+```
+
+The training objective, rollout policy, stopping rule, verifier, and selection procedure form the reasoning system. They must be separated from the base checkpoint identity. Two systems built on the same model can differ materially if one samples one answer and the other samples twenty candidates with a testable verifier.
+
+### Latent computation has an observability limit
+
+Internal activations and any hidden intermediate tokens can influence an answer without being available to the user. This can protect proprietary methods or avoid exposing unsafe detailed work, but it limits direct inspection. A system should not substitute an invented visible rationale for an unavailable trace. It can instead report answer confidence limits, tool outputs, verified constraints, and the inference budget used.
+
+```{python}
+audit={"model":"versioned","samples":4,"selector":"exact verifier","visible_rationale":False,"verified_constraint":"answer parses"}
+print(audit)
+```
+
+### Training and inference mechanisms should not be conflated
+
+Some systems are trained on step-by-step demonstrations or verified outcomes and then answer in one pass. Others use an ordinary base or instruction model but add sampling, tools, or selection only at inference. A third class combines training changes with a multi-step inference loop. These routes can produce similar visible answers while making different resource, data, and evaluation claims.
+
+The distinction is useful because a claimed gain may come from additional test-time sampling rather than a changed base policy, or from a verifier rather than a better generator. Controlled comparisons should hold one component fixed at a time: compare one-pass and multi-sample inference for the same checkpoint; compare a learned selector and an exact verifier over the same candidate set; compare tuned and untuned checkpoints under the same budget.
+
+This separation also limits what a visible rationale can establish. A policy trained on worked solutions may produce orderly steps in one pass, while a search procedure may return a concise answer after evaluating many hidden candidates. The first system exposes more text; the second may use more inference-time computation. Neither observation identifies the cause of correctness without an intervention or a controlled comparison. Process-supervision research makes the distinction operational by scoring intermediate steps, but those scores still require validation against the task and the intended use [@lightman2023lets].
+
+```{python}
+#| label: fig-training-inference-routes
+#| fig-cap: "Reasoning behaviour can arise from training changes, inference-time procedures, or their combination; evaluation should identify the route used."
+#| fig-alt: "Three paths lead to an answer: reasoning-tuned model with one pass, base model with search and verification, and tuned model with search and verification."
+fig,ax=plt.subplots(figsize=(9,3.7)); ax.axis("off")
+paths=[("training change\n→ one-pass answer",orange,2.7),("base model\n→ search + verifier",teal,1.8),("training change\n→ search + verifier",purple,.9)]
+for label,c,y in paths:
+    ax.add_patch(Rectangle((.45,y),2.0,.5,facecolor=c,edgecolor="white")); ax.text(1.45,y+.25,label,ha="center",va="center",color="white",fontsize=8); ax.add_patch(FancyArrowPatch((2.5,y+.25),(4.25,y+.25),arrowstyle="-|>",color=grey,mutation_scale=11)); ax.add_patch(Rectangle((4.35,y),1.4,.5,facecolor=blue,edgecolor="white")); ax.text(5.05,y+.25,"answer",ha="center",va="center",color="white")
+ax.text(3.2,.25,"Hold routes fixed or compare them explicitly.",ha="center",color=grey); ax.set_xlim(0,6.2); ax.set_ylim(.1,3.5); plt.show()
+```
+
+## Level 4 - Audit and scope
+
+### Evaluate the mechanism claimed
+
+A system claiming search should show how candidates are expanded and selected. A system claiming verification should test verifier accuracy and failure modes. A system claiming improved reasoning from longer inference should compare accuracy against the same task under controlled compute budgets. A system claiming faithful traces needs evidence that changes in the trace correspond to changes in the computation or answer under an explicit intervention design.
+
+```{python}
+#| label: fig-reasoning-audit
+#| fig-cap: "A reasoning-system evaluation links each claimed mechanism to a test: search to candidate selection, verification to verifier accuracy, and extra inference to an accuracy-cost curve."
+#| fig-alt: "A table-like chart maps claimed mechanisms to corresponding tests and resource records."
+fig,ax=plt.subplots(figsize=(9,3.5)); ax.axis("off")
+rows=[("search","candidate coverage and selection"),("verification","verifier errors and calibration"),("extra inference","accuracy versus cost"),("visible trace","faithfulness intervention")]
+for i,(claim,test) in enumerate(rows):
+    y=2.8-i*.62; ax.add_patch(Rectangle((.45,y),2.1,.4,facecolor=blue,edgecolor="white")); ax.text(1.5,y+.2,claim,ha="center",va="center",color="white"); ax.add_patch(Rectangle((3.0,y),4.8,.4,facecolor=teal,edgecolor="white")); ax.text(5.4,y+.2,test,ha="center",va="center",color="white",fontsize=9)
+ax.set_xlim(0,8.5); ax.set_ylim(.15,3.4); plt.show()
+```
+
+### Scope claims should remain narrow
+
+Reasoning benchmarks can reward answer formats, familiar problem templates, or verifier-compatible outputs. A gain on one set of mathematical problems does not establish general reasoning across science, law, planning, or open-ended advice. Contamination and benchmark-specific optimisation remain concerns from Chapter 34. The module will therefore report task distributions, inference cost, selected mechanisms, and failure cases rather than treating one score or one trace style as a global capability measure.
+
+An adequate report begins with the base model and task distribution, then states the generator, candidate budget, tools, verifier, selection rule, stopping rule, and answer interface. It reports the outcome measure and resource measures together, followed by examples of false acceptance, false rejection, exhausted budgets, and cases that the system could not verify. That record does not settle whether a system has a general reasoning capability. It does make the narrower claim inspectable and provides the inputs Chapter 36 needs for a valid evaluation.
+
+```{python}
+record={"task":"verifiable arithmetic","base":"checkpoint-v2","samples":8,"verifier":"exact answer","cost":"tokens and latency","evaluation":"held-out problems"}
+assert {"task","samples","verifier","evaluation"} <= set(record)
+print("reasoning-system record complete")
+```
+
+## Common misconceptions
+
+- **A long explanation proves the model reasoned correctly.** It is visible text that requires separate correctness and faithfulness checks.
+- **Reasoning models are a distinct architecture class.** They can share an architecture with base models while changing training or inference procedures.
+- **More inference tokens always improve answers.** Additional computation needs useful candidate diversity and selection or verification.
+- **A correct final answer validates every intermediate step.** Some trajectories are lucky, incomplete, or inconsistent.
+- **A verifier establishes general reasoning.** It validates only the property it is designed and tested to check.
+- **Hidden computation makes evaluation impossible.** It limits direct trace inspection but system-level outcomes and resource use remain evaluable.
+
+## Exercises
+
+1. Distinguish base, instruction-tuned, and reasoning-tuned systems.
+2. List three mechanisms that can add inference-time computation.
+3. Explain why visible chain-of-thought is not automatically faithful.
+4. Implement majority selection over sampled checkable answers.
+5. Define a verifier and one condition it cannot check.
+6. Calculate tokens and verifier calls for a candidate-generation budget.
+7. Design an evaluation of accuracy against number of sampled candidates.
+8. Separate decomposition from verification in a system trace.
+9. Explain why a final-answer reward can favour a lucky trajectory.
+10. List fields required to reproduce a reasoning-system result.
+11. Propose an intervention test for visible-trace faithfulness.
+12. Compare a tool-assisted answer with a model-only answer.
+13. Identify a mechanism that can fail despite a correct final answer.
+14. State why a task-specific reasoning gain should not be generalised broadly.
+15. Define an inference budget in two different units.
+16. Identify the next chapter's reasoning-evaluation focus.
+
+## Summary
+
+A reasoning model is best defined operationally: it uses additional multi-step computation, search, decomposition, verification, or extended inference that can be evaluated on a task. Visible rationales, internal computation, and answer correctness are distinct objects. The relevant evidence includes task outcomes, mechanism-specific tests, inference cost, and failure traces.
+
+[Chapter 36](36-evaluating-reasoning.qmd) develops evaluation for answer accuracy, process evidence, verifiers, contamination, robustness, and the cost of additional computation.
+
+## Looking ahead
+
+An operational definition of reasoning needs an equally explicit evaluation design. [Chapter 36](36-evaluating-reasoning.qmd) separates outcome, process, robustness, and resource evidence for systems that use multi-step computation.
+
+## Further reading
+
+Chain-of-thought prompting is studied by @wei2022chain. The module's educational build perspective is informed by @raschka2025reasoning.

@@ -1,0 +1,647 @@
+---
+title: "What Is Machine Learning?"
+subtitle: "From examples to predictions"
+---
+
+## Chapter orientation
+
+### Why this chapter matters
+
+Machine learning is often described as a system that “learns from data”. That phrase is useful, but incomplete. A machine-learning system does not learn in the human sense. It is given examples, a representation of those examples, an objective, and a procedure for changing its parameters. The result is a function that can produce outputs for new inputs.
+
+This chapter establishes the vocabulary needed for the rest of the book. It also introduces a discipline that will recur throughout: a model’s quality depends not only on its algorithm, but on the question, data, target, evaluation procedure, and setting in which its predictions will be used.
+
+### Learning objectives
+
+By the end of this chapter, you should be able to:
+
+- distinguish explicit rules from patterns estimated from data;
+- identify observations, features, labels, predictions, parameters, and hyperparameters;
+- describe training, validation, testing, and inference;
+- distinguish supervised, unsupervised, and generative learning settings;
+- calculate simple regression and classification metrics;
+- explain overfitting and generalisation;
+- identify data leakage and distribution shift;
+- distinguish a predictive question from a causal question.
+
+### Running example: programme uptake
+
+Suppose an organisation wants to estimate whether a household will take up a programme if it is offered. For each household, we might observe:
+
+| Household | Age of respondent | Distance to service point | Prior participation | Took up programme? |
+|---|---:|---:|---:|---:|
+| A | 24 | 2.1 km | 0 | 1 |
+| B | 58 | 18.4 km | 1 | 0 |
+| C | 37 | 5.8 km | 1 | 1 |
+
+The first three columns are **features**: inputs used to make a prediction. The final column is a **label**: the outcome we want to predict. A model may learn that distance, age, and previous participation are associated with uptake. It does not follow a rule written by an analyst; it estimates parameters from examples.
+
+This example is deliberately limited. A prediction of uptake is not an estimate of whether offering the programme causes uptake. That distinction becomes important when we discuss causal inference and responsible deployment.
+
+### The prediction problem comes before the algorithm
+
+A prediction is defined by more than its label. We also need to specify when the prediction is made, for whom it is made, what information is available at that point, and what action may follow from it. “Will this household take up the programme?” is incomplete unless we say whether the prediction is made before contact, after an information session, or after an application has been submitted.
+
+This timing determines which features are legitimate. An application outcome may be highly predictive after an application has been processed, but it cannot be used to decide whom to contact before the application exists. A variable can therefore be statistically useful and operationally invalid at the same time.
+
+The target also needs a precise definition. “Take-up” might mean attending once, completing a programme, receiving a transfer, or remaining enrolled after six months. These outcomes are related but not interchangeable. Changing the label changes the problem the model is solving.
+
+### A model is a conditional statement
+
+In the running example, a prediction model estimates a relationship of the form:
+
+$$
+P(Y=1\mid X=x),
+$$
+
+the probability of observing uptake for cases with observed characteristics $x$. This is a conditional prediction, not a statement that changing one feature will change the outcome. The distinction is easy to lose because the same variables can appear in both predictive and causal analyses.
+
+For prediction, a feature is valuable when it improves out-of-sample forecasts. For causal analysis, a variable must be connected to a design and assumptions that identify a counterfactual comparison. A model can predict well while offering no credible estimate of what would happen if a programme were offered to a different household.
+
+::: {.concept-box .concept-core #concept-machine-learning data-term="Machine learning" data-domain="Foundations"}
+**Machine learning.** A procedure that fits a parameterised mapping from inputs to outputs using examples and a stated objective. **Training** changes the fitted parameters; **inference** applies the resulting model to new inputs. A prediction can be useful without establishing that its inputs cause the outcome.
+:::
+
+## Level 1 - Intuition
+
+```{python}
+#| label: fig-intuition-pattern
+#| fig-cap: "A model learns a pattern from examples and applies it to a new case."
+#| fig-alt: "Two groups of observations shown in feature space, with a new observation marked separately."
+import numpy as np
+import matplotlib.pyplot as plt
+
+plt.style.use("seaborn-v0_8-whitegrid")
+blue, teal, orange = "#24527a", "#3a9188", "#d97745"
+rng = np.random.default_rng(7)
+
+fig, ax = plt.subplots(figsize=(7.5, 4.2))
+positive = rng.multivariate_normal([6.5, 6], [[1.2, 0.3], [0.3, 1.0]], 45)
+negative = rng.multivariate_normal([3.5, 3.4], [[1.0, 0.1], [0.1, 1.1]], 45)
+new_case = np.array([5.8, 5.2])
+ax.scatter(negative[:, 0], negative[:, 1], color=blue, alpha=0.65, label="examples: no uptake")
+ax.scatter(positive[:, 0], positive[:, 1], color=orange, alpha=0.65, label="examples: uptake")
+ax.scatter(*new_case, color=teal, edgecolor="white", linewidth=1.5, s=120, marker="*", label="new case")
+ax.set(xlabel="Feature 1", ylabel="Feature 2", title="Examples provide a pattern for a new prediction")
+ax.legend(frameon=False)
+plt.tight_layout()
+plt.show()
+```
+
+The model does not memorise a label for the new case. It uses the relationship estimated from the examples to assign a prediction.
+
+The figure shows the basic inferential move made by a prediction model. The coloured points are cases for which the outcome is known. The star is a case for which the outcome is not yet known. The model uses the position of the star relative to the observed pattern to produce an output. The output may be a class, a number, or a probability. It is not a statement that the features caused the outcome.
+
+The model can be wrong in at least two ways. It can miss a pattern that is present in the data, or it can treat a pattern in the development data as if it would continue in new data when it will not. The first problem concerns fitting; the second concerns generalisation. Both are part of the learning problem.
+
+### Rules written by people
+
+Traditional software is usually specified as a sequence of instructions. For example:
+
+```text
+if distance < 5 km and prior participation = 1:
+    predict high uptake
+else:
+    predict low uptake
+```
+
+The analyst writes the rule, and the computer applies it. If the rule is wrong, the analyst must change it.
+
+### Patterns estimated from examples
+
+In machine learning, we provide examples and ask the system to estimate a useful mapping. The model might represent the mapping as a weighted combination of features, a tree of decisions, or a neural network. The computer does not receive a complete list of rules. It receives an objective—make predictions that agree with observed outcomes—and adjusts internal parameters to improve that objective.
+
+The distinction is not absolute. People still choose the data, define the target, choose the model family, and decide how predictions will be used. Machine learning automates part of the pattern-finding process; it does not remove human judgement from the system.
+
+```{python}
+#| label: fig-rule-vs-learned
+#| fig-cap: "A hand-written rule fixes a boundary in advance; a fitted model estimates a boundary from labelled examples."
+#| fig-alt: "Two panels show the same household examples by age and distance. The hand-written rule uses a horizontal distance boundary, while the learned model uses an angled boundary estimated from the examples."
+from sklearn.linear_model import LogisticRegression
+from matplotlib.lines import Line2D
+
+rng_rule = np.random.default_rng(17)
+n_households = 180
+age_rule = rng_rule.uniform(18, 70, n_households)
+distance_rule = rng_rule.uniform(0, 20, n_households)
+uptake_probability = 1 / (
+    1 + np.exp(-(1.5 - 0.18 * distance_rule + 0.035 * (age_rule - 40)))
+)
+uptake_rule = rng_rule.binomial(1, uptake_probability)
+
+rule_features = np.column_stack([age_rule, distance_rule])
+learned_boundary = LogisticRegression().fit(rule_features, uptake_rule)
+
+age_grid = np.linspace(18, 70, 220)
+distance_grid = np.linspace(0, 20, 220)
+age_mesh, distance_mesh = np.meshgrid(age_grid, distance_grid)
+grid_features = np.column_stack([age_mesh.ravel(), distance_mesh.ravel()])
+
+written_predictions = (distance_mesh < 8).astype(int)
+learned_predictions = learned_boundary.predict(grid_features).reshape(age_mesh.shape)
+
+region_colours = ["#dce8f2", "#f8e1d5"]
+fig, axes = plt.subplots(1, 2, figsize=(10, 4.3), sharex=True, sharey=True)
+
+for ax, regions, panel_title in [
+    (axes[0], written_predictions, "Hand-written rule: distance < 8 km"),
+    (axes[1], learned_predictions, "Pattern estimated from examples"),
+]:
+    ax.contourf(
+        age_mesh,
+        distance_mesh,
+        regions,
+        levels=[-0.5, 0.5, 1.5],
+        colors=region_colours,
+        alpha=0.85,
+    )
+    ax.contour(
+        age_mesh,
+        distance_mesh,
+        regions,
+        levels=[0.5],
+        colors=[teal],
+        linewidths=2.2,
+    )
+    ax.scatter(
+        age_rule[uptake_rule == 0],
+        distance_rule[uptake_rule == 0],
+        color=blue,
+        marker="o",
+        s=24,
+        alpha=0.68,
+        edgecolor="white",
+        linewidth=0.4,
+    )
+    ax.scatter(
+        age_rule[uptake_rule == 1],
+        distance_rule[uptake_rule == 1],
+        color=orange,
+        marker="^",
+        s=30,
+        alpha=0.72,
+        edgecolor="white",
+        linewidth=0.4,
+    )
+    ax.set_title(panel_title)
+    ax.set_xlabel("Age of respondent")
+
+axes[0].set_ylabel("Distance to service point (km)")
+legend_handles = [
+    Line2D([0], [0], marker="o", color="none", markerfacecolor=blue,
+           markeredgecolor="white", markersize=7, label="Observed: no uptake"),
+    Line2D([0], [0], marker="^", color="none", markerfacecolor=orange,
+           markeredgecolor="white", markersize=8, label="Observed: uptake"),
+    Line2D([0], [0], color=teal, linewidth=2.2, label="Prediction boundary"),
+]
+fig.legend(handles=legend_handles, loc="lower center", ncol=3, frameon=False,
+           bbox_to_anchor=(0.5, -0.03))
+plt.tight_layout(rect=[0, 0.08, 1, 1])
+plt.show()
+```
+
+Both panels use the same illustrative observations. In the left panel, the analyst decides in advance that distance alone determines the prediction. The boundary is therefore horizontal: age cannot alter the decision. In the right panel, a logistic model estimates how both age and distance separate the observed classes. Its angled boundary reflects the fitted association in these examples. Neither boundary is a causal claim, and the fitted boundary is not automatically preferable; it must still be evaluated on cases that were not used to estimate it.
+
+### Prediction is not understanding
+
+A model can produce useful predictions without possessing a human-like explanation of the world. It may exploit regularities that are stable enough in the data but accidental, unfair, or fragile outside that setting. This is why evaluation must ask more than “does the model fit the examples?” It must ask whether the predictions remain useful for the intended population and decision.
+
+## Level 2 - Mechanics
+
+```{python}
+#| label: fig-mechanics-pipeline
+#| fig-cap: "The mechanics of prediction: features enter a fitted model and produce an output."
+#| fig-alt: "A horizontal diagram showing features entering a fitted model and producing a predicted probability."
+fig, ax = plt.subplots(figsize=(8.5, 2.2))
+ax.text(0.12, 0.5, "features\n(age, distance, prior participation)", ha="center", va="center", color="white", weight="bold",
+        bbox={"boxstyle": "round,pad=0.6", "facecolor": blue})
+ax.text(0.50, 0.5, "fitted\nmodel", ha="center", va="center", color="white", weight="bold",
+        bbox={"boxstyle": "round,pad=0.6", "facecolor": teal})
+ax.text(0.86, 0.5, "prediction\nP(uptake)", ha="center", va="center", color="white", weight="bold",
+        bbox={"boxstyle": "round,pad=0.6", "facecolor": orange})
+ax.annotate("", xy=(0.39, 0.5), xytext=(0.27, 0.5), arrowprops={"arrowstyle": "->", "lw": 2, "color": "#666666"})
+ax.annotate("", xy=(0.76, 0.5), xytext=(0.62, 0.5), arrowprops={"arrowstyle": "->", "lw": 2, "color": "#666666"})
+ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.axis("off")
+plt.tight_layout()
+plt.show()
+```
+
+The diagram separates three operations that are often compressed into the word “model”. The features are the information available at prediction time. The fitted model is the function whose parameters were estimated using training data. The prediction is the output for this particular case. The arrows indicate computation, not causation: they show how information is transformed into an output.
+
+### The basic objects
+
+An ML dataset can be represented as a table with $n$ observations and $p$ features. Let:
+
+- $x_i$ be the feature vector for observation $i$;
+- $y_i$ be its observed label or target;
+- $f_\theta$ be a model with parameters $\theta$;
+- $\hat{y}_i=f_\theta(x_i)$ be the model’s prediction.
+
+The model is trained by comparing predictions with labels and changing $\theta$ so that the discrepancy becomes smaller. A **parameter** is learned from the training data. A **hyperparameter** is chosen by the analyst or training procedure, such as a learning rate, tree depth, or regularisation strength.
+
+The notation records the same sequence as the diagram. $x_i$ is the information entering the model for case $i$. The function $f_\theta$ is the fitted rule. Applying that function to $x_i$ produces $\hat y_i$, the prediction. The observed $y_i$ is then used to assess the prediction during training or evaluation. The notation does not imply that $x_i$ causes $y_i$; it specifies how the prediction problem is represented.
+
+### What the model can and cannot learn
+
+The model only has access to the information encoded in the training data and representation. If distance to a service point is measured poorly, the model receives a noisy version of that feature. If prior participation is missing for households who moved between administrative systems, the missingness may become a more informative signal than the recorded value. If the label is systematically absent for a subgroup, the training objective does not correct the problem by itself.
+
+This is why data preparation is part of model design. Decisions about coding, missing values, exclusions, time windows, and aggregation alter the statistical problem. They can change which population is represented and which patterns are available to the model.
+
+### Baselines are part of the evidence
+
+A model should be compared with a simple baseline. For a binary outcome, the baseline may always predict the majority class or use the overall uptake rate as the probability prediction. For a continuous outcome, it may predict the training mean for every case. A complex model that does not improve on a baseline has not demonstrated useful predictive structure.
+
+Baselines also reveal whether a metric is being interpreted correctly. If 90 per cent of cases are negative, a classifier that always predicts “negative” achieves 90 per cent accuracy while detecting no positive cases. Accuracy alone therefore hides the distribution of errors.
+
+### Evaluation follows the decision
+
+Evaluation metrics should reflect how predictions will be used. If missing a potential beneficiary is costly, recall may matter more than precision. If follow-up is expensive, precision may matter more. If a model supplies risk scores to different teams, calibration may be more useful than a ranking metric: among cases assigned a probability of 0.7, roughly 70 per cent should experience the outcome if the probabilities are well calibrated.
+
+```{python}
+#| label: fig-calibration
+#| fig-cap: "Calibration compares predicted probabilities with observed outcome frequencies."
+#| fig-alt: "A reliability diagram compares a well-calibrated model with an overconfident model. The calibrated series remains near the diagonal, while the overconfident series lies closer to one half than its predictions imply."
+probability_bins = np.arange(0.1, 1.0, 0.1)
+observed_calibrated = np.array([0.09, 0.21, 0.31, 0.39, 0.51, 0.61, 0.68, 0.79, 0.91])
+observed_overconfident = np.array([0.24, 0.31, 0.39, 0.46, 0.50, 0.55, 0.62, 0.69, 0.76])
+
+fig, ax = plt.subplots(figsize=(7.2, 5.2))
+ax.plot([0, 1], [0, 1], color="#777777", linestyle="--", linewidth=1.5,
+        label="Perfect calibration")
+ax.plot(probability_bins, observed_calibrated, color=teal, marker="o",
+        linewidth=2.4, markersize=6, label="Well calibrated")
+ax.plot(probability_bins, observed_overconfident, color=orange, marker="s",
+        linewidth=2.4, markersize=5.5, label="Overconfident")
+ax.fill_between(
+    probability_bins,
+    probability_bins,
+    observed_overconfident,
+    color=orange,
+    alpha=0.10,
+)
+ax.annotate(
+    "Predicted 0.80;\nobserved rate 0.69",
+    xy=(0.8, 0.69),
+    xytext=(0.55, 0.84),
+    arrowprops={"arrowstyle": "->", "color": orange},
+    color="#4a4a4a",
+)
+ax.set(
+    xlim=(0, 1),
+    ylim=(0, 1),
+    xlabel="Mean predicted probability",
+    ylabel="Observed outcome frequency",
+    title="A reliability diagram reveals probability error",
+)
+ax.set_aspect("equal", adjustable="box")
+ax.legend(frameon=False, loc="upper left")
+plt.tight_layout()
+plt.show()
+```
+
+The diagonal represents agreement between predicted probabilities and observed frequencies. The teal series stays close to that reference. The orange series is overconfident: its probabilities are more extreme than the observed outcome rates. For example, cases assigned a mean probability of 0.80 have an observed rate of 0.69 in this illustration. Calibration is estimated on held-out observations and is uncertain when few cases fall in a probability range. Guo and colleagues use reliability diagrams and related summaries to assess calibration in neural-network classifiers [@guo2017calibration].
+
+No metric resolves these choices automatically. The metric makes a particular error structure visible and leaves other aspects unmeasured.
+
+### The ML workflow
+
+1. **Define the task.** Specify the population, prediction moment, target, and decision that may use the prediction.
+2. **Construct the data.** Identify observations, features, labels, missing values, and measurement limits.
+3. **Choose a representation.** Convert raw inputs into numerical or categorical features the model can process.
+4. **Choose a model family.** A linear model, tree, neural network, or another family imposes different assumptions and trade-offs.
+5. **Fit parameters.** Use training data to choose parameter values that reduce a loss.
+6. **Tune hyperparameters.** Use validation data or cross-validation to compare configurations.
+7. **Evaluate once on held-out data.** The test set estimates performance on new cases.
+8. **Deploy and monitor.** Check whether data, performance, and consequences change over time.
+
+### Training, validation, testing, and inference
+
+The training set is used to fit parameters. The validation set is used to make choices about the model. The test set is held back until the choices are complete. Once the model is deployed, **inference** means applying the fixed model to new inputs.
+
+If the test set is repeatedly inspected and used to guide decisions, it is no longer a clean test set. This is a subtle but common form of leakage: information from the evaluation data has influenced the model-development process.
+
+```{python}
+#| label: fig-data-split
+#| fig-cap: "A clean development workflow keeps the test set separate until final evaluation."
+#| fig-alt: "A flow diagram showing data divided into training, validation, and test sets, with the test set used only at final evaluation."
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
+
+plt.style.use("seaborn-v0_8-whitegrid")
+blue, teal, orange = "#24527a", "#3a9188", "#d97745"
+rng = np.random.default_rng(7)
+
+fig, ax = plt.subplots(figsize=(9, 2.2))
+blocks = [(0.02, 0.55, 0.48, "Training\nfit parameters", blue),
+          (0.52, 0.55, 0.22, "Validation\nchoose model", teal),
+          (0.76, 0.55, 0.22, "Test\nfinal estimate", orange)]
+for x, y, width, label, color in blocks:
+    ax.add_patch(Rectangle((x, y), width, 0.28, facecolor=color, alpha=0.85))
+    ax.text(x + width / 2, y + 0.14, label, ha="center", va="center", color="white", weight="bold")
+ax.annotate("development decisions", xy=(0.62, 0.48), xytext=(0.25, 0.18),
+            arrowprops={"arrowstyle": "->", "color": "#5c6670"}, ha="center")
+ax.annotate("used once", xy=(0.87, 0.48), xytext=(0.87, 0.18),
+            arrowprops={"arrowstyle": "->", "color": "#5c6670"}, ha="center")
+ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.axis("off")
+plt.tight_layout()
+plt.show()
+```
+
+### Three common learning settings
+
+**Supervised learning** uses labelled examples. Regression predicts a continuous quantity such as income; classification predicts a category or probability such as uptake.
+
+**Unsupervised learning** has no observed target for each example. The task may be to identify clusters, compress representations, or detect unusual observations.
+
+**Generative learning** models how data are produced or represented so that it can generate, complete, or transform examples. Large language models are trained as generative models by predicting tokens, but they also use supervised and preference-based stages later in development.
+
+These categories describe the information available to the training procedure, not the full behaviour of a deployed system. A single language model may be pretrained with a self-supervised next-token objective, fine-tuned with labelled demonstrations, and evaluated with a verifier or human preference signal. The stages use different forms of supervision even when the model architecture remains similar.
+
+## Level 3 - Mathematics & Code
+
+At this level, the earlier vocabulary is translated into a small mathematical model. The equations state exactly what enters the model, what it produces, and how its errors are summarised. The code then implements the same objects so that the relationship between the notation and the computation remains visible.
+
+### A linear prediction model
+
+The simplest useful model is a linear function:
+
+$$
+\hat{y}_i=w^\top x_i+b.
+$$
+
+The equation can be read from left to right. $x_i$ is the vector of features for one observation. $w$ contains one weight for each feature. The dot product $w^\top x_i$ multiplies each feature by its weight and adds the results. The intercept $b$ shifts the total. The output $\hat y_i$ is therefore a prediction generated by the current parameter values; it is not yet a measure of whether the prediction is accurate.
+
+Here, $w$ is a vector of feature weights and $b$ is an intercept. The model is not necessarily “true” because it is linear. It is a baseline: simple enough to understand, fast to fit, and useful for diagnosing whether the features contain predictive signal.
+
+For regression, a common loss is mean squared error:
+
+$$
+\operatorname{MSE}=\frac{1}{n}\sum_{i=1}^n(\hat{y}_i-y_i)^2.
+$$
+
+```{python}
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error, r2_score
+
+rng = np.random.default_rng(7)
+n = 120
+distance = rng.uniform(1, 25, n)
+prior_participation = rng.integers(0, 2, n)
+age = rng.uniform(18, 75, n)
+uptake_score = 0.75 - 0.025 * distance + 0.18 * prior_participation + rng.normal(0, 0.08, n)
+
+data = pd.DataFrame({
+    "distance": distance,
+    "prior_participation": prior_participation,
+    "age": age,
+    "uptake_score": uptake_score,
+})
+
+X = data[["distance", "prior_participation", "age"]]
+y = data["uptake_score"]
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=7)
+
+model = LinearRegression().fit(X_train, y_train)
+predictions = model.predict(X_test)
+print(f"test MSE: {mean_squared_error(y_test, predictions):.3f}")
+print(f"test R²:   {r2_score(y_test, predictions):.3f}")
+```
+
+The $R^2$ statistic measures improvement over a constant-mean baseline in this setting. It is not a universal measure of usefulness. A model can have a respectable $R^2$ and still be poorly calibrated or too inaccurate for the decision it supports.
+
+### Residuals are information
+
+For a regression model, the residual is:
+
+$$
+e_i=y_i-\hat y_i.
+$$
+
+The mean squared error reduces these residuals to one number. A residual plot preserves more information. A funnel shape can indicate non-constant variance; a curve can indicate that a linear model is missing a systematic relationship; clusters can reveal groups with different measurement processes.
+
+```{python}
+#| label: fig-regression-residuals
+#| fig-cap: "Predictions should be inspected alongside residuals rather than summarised by one score."
+#| fig-alt: "Two panels showing observed versus predicted scores and residuals against predicted scores."
+residuals = y_test.to_numpy() - predictions
+
+fig, axes = plt.subplots(1, 2, figsize=(9, 3.8))
+axes[0].scatter(y_test, predictions, color=blue, alpha=0.7)
+limits = [min(y_test.min(), predictions.min()), max(y_test.max(), predictions.max())]
+axes[0].plot(limits, limits, color=orange, linestyle="--")
+axes[0].set(xlabel="Observed score", ylabel="Predicted score", title="Observed and predicted")
+axes[1].scatter(predictions, residuals, color=teal, alpha=0.7)
+axes[1].axhline(0, color=orange, linestyle="--")
+axes[1].set(xlabel="Predicted score", ylabel="Residual", title="Residual diagnostic")
+plt.tight_layout()
+plt.show()
+```
+
+The code is deliberately simple, but the principle extends to neural networks and language models. Aggregate performance can hide structured failures. Evaluation should therefore examine examples, subgroups, ranges of predicted risk, and the conditions under which the model is expected to operate.
+
+### A confusion matrix
+
+For binary classification, four counts describe the relationship between predictions and outcomes:
+
+|  | Observed positive | Observed negative |
+|---|---:|---:|
+| Predicted positive | True positive | False positive |
+| Predicted negative | False negative | True negative |
+
+From these counts:
+
+$$
+\text{precision}=\frac{TP}{TP+FP},\qquad
+\text{recall}=\frac{TP}{TP+FN}.
+$$
+
+Precision asks: among predicted positives, how many were positive? Recall asks: among observed positives, how many did the model identify? They answer different questions and can move in opposite directions as the threshold changes.
+
+### Classification and probabilities
+
+For binary classification, a model may output a score that is converted into a probability $p_i$ between 0 and 1. A threshold turns that probability into a decision:
+
+$$
+\hat{y}_i=
+\begin{cases}
+1 & p_i\geq t\\
+0 & p_i<t.
+\end{cases}
+$$
+
+Changing $t$ changes the balance between false positives and false negatives. There is no threshold that is best in the abstract; the choice depends on the consequences of each error.
+
+```{python}
+#| label: fig-threshold
+#| fig-cap: "Changing the classification threshold changes the number of predicted positives."
+#| fig-alt: "A histogram of predicted probabilities separated by a vertical threshold line."
+positive = rng.beta(7, 3, 70)
+negative = rng.beta(2, 6, 70)
+threshold = 0.5
+
+fig, ax = plt.subplots(figsize=(8, 4.2))
+ax.hist(negative, bins=12, alpha=0.65, color=blue, label="Observed negative")
+ax.hist(positive, bins=12, alpha=0.65, color=orange, label="Observed positive")
+ax.axvline(threshold, color=teal, linewidth=2.5, linestyle="--", label="threshold = 0.5")
+ax.set(xlabel="Predicted probability", ylabel="Number of observations", title="A threshold converts probabilities into decisions")
+ax.legend(frameon=False)
+plt.tight_layout()
+plt.show()
+```
+
+## Level 4 - Research & Systems
+
+The final level changes the question. It asks what assumptions are required for the preceding workflow to work outside the development data, and what additional problems arise when predictions are used by an institution. The focus is therefore on generalisation, measurement, deployment, and consequences.
+
+### The training objective is not the deployment objective
+
+Most formal ML training minimises an average loss over observed examples. A deployed system may be judged by a different quantity: service access, safety, cost, equity, response time, or downstream decisions. The training loss is a proxy for the real objective. This gap between the fitted model and the surrounding production system is a documented source of technical debt [@sculley2015].
+
+This gap is one reason that data and evaluation design matter so much. If the label is measured with error, the model may learn the measurement process. If the data exclude a population, test performance may not describe that population. If the deployment environment changes, yesterday’s test set may no longer be informative.
+
+### Generalization and overfitting
+
+A model that memorises its training examples can achieve low training loss and poor performance on new cases. This is overfitting. Generalisation is the ability to perform well on observations drawn from the relevant target population.
+
+Model complexity is not automatically bad. A complex model can represent useful structure that a simple model cannot. The practical question is whether the additional flexibility captures stable signal or accidental features of the development data.
+
+Overfitting is not limited to models with many visible parameters. It can result from repeated choices by the analyst: trying many feature definitions, thresholds, samples, or model configurations and reporting the most favourable test result. The effective complexity of the workflow includes these decisions, even when the final model is small.
+
+```{python}
+#| label: fig-generalization
+#| fig-cap: "Training and test error can move in different directions as model flexibility increases."
+#| fig-alt: "A conceptual plot showing training error falling while test error falls and then rises as model complexity increases."
+complexity = np.linspace(0.1, 10, 100)
+train_error = 0.9 / (complexity + 0.3) + 0.04
+test_error = 0.7 / (complexity + 0.4) + 0.012 * (complexity - 3.5) ** 2 + 0.12
+
+fig, ax = plt.subplots(figsize=(8, 4.4))
+ax.plot(complexity, train_error, color=blue, linewidth=2.5, label="training error")
+ax.plot(complexity, test_error, color=orange, linewidth=2.5, label="test error")
+ax.axvline(complexity[np.argmin(test_error)], color=teal, linestyle="--", label="best held-out performance")
+ax.set(xlabel="Model flexibility", ylabel="Error", title="Generalization is the target")
+ax.legend(frameon=False)
+plt.tight_layout()
+plt.show()
+```
+
+### Leakage, shift, and subgroup performance
+
+**Data leakage** occurs when information unavailable at prediction time, or information derived from the outcome, enters the features. Leakage can produce impressive validation scores and disappointing deployment performance.
+
+**Distribution shift** occurs when the relationship between inputs and outcomes changes, or when the deployment population differs from the training population. Monitoring should therefore include input distributions, missingness, calibration, subgroup performance, and decision consequences—not only an overall accuracy score.
+
+```{python}
+#| label: fig-distribution-shift
+#| fig-cap: "Distribution shift can change the inputs presented to a model, the relationship between inputs and outcomes, or both."
+#| fig-alt: "The left panel shows deployment households located farther from a service point than training households. The right panel shows the probability of uptake changing at the same distance between training and deployment."
+distance_shift = np.linspace(0, 25, 300)
+
+def normal_density(values, mean, sd):
+    return np.exp(-0.5 * ((values - mean) / sd) ** 2) / (sd * np.sqrt(2 * np.pi))
+
+training_density = normal_density(distance_shift, mean=6.5, sd=3.0)
+deployment_density = normal_density(distance_shift, mean=12.0, sd=4.0)
+training_relationship = 1 / (1 + np.exp(-(1.8 - 0.20 * distance_shift)))
+deployment_relationship = 1 / (1 + np.exp(-(1.0 - 0.20 * distance_shift)))
+
+fig, axes = plt.subplots(1, 2, figsize=(10, 4.1))
+
+axes[0].fill_between(distance_shift, training_density, color=blue, alpha=0.22)
+axes[0].plot(distance_shift, training_density, color=blue, linewidth=2.4,
+             label="Training population")
+axes[0].fill_between(distance_shift, deployment_density, color=orange, alpha=0.20)
+axes[0].plot(distance_shift, deployment_density, color=orange, linewidth=2.4,
+             label="Deployment population")
+axes[0].set(
+    xlabel="Distance to service point (km)",
+    ylabel="Relative density",
+    title="The input population changes",
+)
+axes[0].set_yticks([])
+axes[0].legend(frameon=False)
+
+axes[1].plot(distance_shift, training_relationship, color=blue, linewidth=2.5,
+             label="Relationship learned in training")
+axes[1].plot(distance_shift, deployment_relationship, color=orange,
+             linewidth=2.5, linestyle="--", label="Relationship at deployment")
+axes[1].axvline(8, color=teal, linewidth=1.2, alpha=0.7)
+axes[1].text(8.35, 0.96, "same distance", color="#4a4a4a", va="top")
+axes[1].scatter(
+    [8, 8],
+    [
+        1 / (1 + np.exp(-(1.8 - 0.20 * 8))),
+        1 / (1 + np.exp(-(1.0 - 0.20 * 8))),
+    ],
+    color=[blue, orange],
+    s=55,
+    zorder=3,
+)
+axes[1].set(
+    xlabel="Distance to service point (km)",
+    ylabel="Probability of uptake",
+    title="The outcome relationship changes",
+    ylim=(0, 1),
+)
+axes[1].legend(frameon=False)
+
+plt.tight_layout()
+plt.show()
+```
+
+The left panel shows an input-distribution change: households in deployment are located farther away than households in the training data. Such a shift does not by itself prove that the model is wrong, but it means that the model is being used more often in a region with less training support. The right panel shows a change in the conditional relationship: at the same distance, uptake is lower in deployment than the relationship estimated during training. In that case, retaining the original mapping produces systematically high probabilities. Empirical studies of dataset shift show that predictive accuracy and calibration can deteriorate together, and that calibration measured on the original test distribution need not survive the shift [@ovadia2019].
+
+**Fairness** is not a single metric. Different groups may differ in base rates, error costs, calibration, or access to measurement. A model should be assessed in relation to the decision and institutional context in which it is used.
+
+The distinction between missingness and absence is often material. If a feature is missing because a household was never reached, missingness may encode prior access to the programme. Imputing a single average value does not remove that institutional pattern; it may conceal it. A useful data audit therefore asks who is measured, who is missing, and why.
+
+Evaluation should also be aligned with the unit of deployment. Randomly splitting rows can overstate performance when several rows belong to the same person, household, institution, or time period. A model that predicts a future month should generally be evaluated with a time-respecting split. A model intended for new institutions should be tested on institutions not represented in training. The appropriate split follows the claim about generalisation.
+
+### Prediction is not causal inference
+
+The model in this chapter predicts uptake from observed characteristics. It does not estimate the causal effect of offering the programme. To estimate that effect, we would need a causal design, such as a randomized experiment or a credible quasi-experimental strategy, together with assumptions about identification.
+
+This distinction matters in policy work. A model may be good at predicting who would take up a service while being poor at identifying who would benefit from being offered the service. The first is a prediction problem; the second is closer to treatment-effect estimation.
+
+## Common misconceptions
+
+- **Machine learning removes human judgement.** Humans still define the task, data, target, evaluation, and use.
+- **A high training score means the model is useful.** Generalization and deployment performance matter.
+- **A feature with predictive power is necessarily causal.** Prediction and causal explanation are different goals.
+- **The test set is a second training set.** Repeatedly using it to make development decisions contaminates the estimate.
+- **More complex models are always better.** Complexity helps only when it captures stable, relevant structure.
+
+## Exercises
+
+1. Identify the features, label, prediction, parameters, and hyperparameters in the programme-uptake example.
+2. Give one example each of supervised, unsupervised, and generative learning.
+3. Calculate the prediction from $\hat y=2x+1$ when $x=4$.
+4. Calculate the MSE for predictions $(2,4,5)$ and targets $(3,3,6)$.
+5. Explain what changes when a classification threshold moves from 0.5 to 0.8.
+6. Give an example of data leakage in a programme-uptake model.
+7. Why might a model have lower accuracy for one subgroup?
+8. Explain why predicting uptake is not the same as predicting who benefits from treatment.
+9. Design a train-validation-test split for data collected over time.
+10. Describe one reason a model can perform well in testing but poorly after deployment.
+11. Write two operational definitions of “programme uptake” that would create different labels. State when each label would be observed.
+12. A feature records whether a household completed the programme. Explain why it is invalid for a model used to decide whom to contact before enrolment.
+13. A classifier makes 80 correct predictions from 100 cases, but all 20 errors occur in one subgroup. State what accuracy does and does not establish about this result.
+14. A model predicts a high probability of uptake for households near a service point. State one causal claim that the model cannot support and what additional design would be needed to assess it.
+15. Name the data, target definition, decision point, and outcome measure that should appear in a short deployment record for the running example.
+16. A programme changes its eligibility rule after the model is trained. Explain how this could change both the observed features and the meaning of the label.
+
+## Summary
+
+Machine learning estimates a mapping from inputs to outputs using examples, a model family, a loss function, and an optimisation procedure. The basic workflow separates fitting, model selection, final evaluation, and inference. Useful ML practice requires attention to generalisation, leakage, distribution shift, subgroup performance, and the difference between prediction and causation.
+
+## Looking ahead
+
+Once a model produces predictions, the model's output must be distinguished from the observed target and the discrepancy between them must be measured. [Chapter 2](02-models-predictions-loss.qmd) develops models, predictions, targets, and loss functions. [Chapter 3](03-gradient-descent.qmd) then explains how model parameters can be changed systematically to reduce loss.
+
+## Further reading
+
+The statistical-learning perspective is developed in @hastie2009. @mitchell1997 provides a broad conceptual introduction to machine learning. For the operational risks that arise when models become part of larger products and institutions, see @sculley2015. The documentation of datasets and models is discussed by @gebru2021 and @mitchell2019. Calibration in modern neural networks is examined by @guo2017calibration, while @ovadia2019 evaluate predictive uncertainty under dataset shift.

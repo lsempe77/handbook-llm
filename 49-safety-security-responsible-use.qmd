@@ -1,0 +1,245 @@
+---
+title: "Safety, Security, and Responsible Use"
+subtitle: "Misuse, prompt injection, data exposure, safeguards, and governance choices"
+---
+
+## Chapter orientation
+
+Safety work begins with a stated system, users, assets, and failure consequences. A general-purpose model can produce harmful content, follow malicious instructions embedded in retrieved material, disclose data supplied in a conversation, or fail in a high-consequence workflow. These are different risks and require different evidence. Model Cards provide a structured way to report intended uses, evaluation, and limitations [@mitchell2019], but a refusal rate or a model-card statement cannot substitute for threat modelling, controlled evaluation, access controls, and incident response.
+
+::: {.concept-box .concept-core #concept-responsible-use data-term="Responsible use" data-domain="Modern AI systems"}
+**Responsible use.** A decision to operate a named system for a stated use with evidence, safeguards, ownership, residual-risk acceptance, and a route for review or remedy. It is not a property supplied automatically by a model.
+:::
+
+::: {.concept-box .concept-distinction #concept-safety-security-misuse data-term="Safety, security, and misuse" data-domain="Modern AI systems"}
+**Safety, security, and misuse.** Safety concerns harmful system outcomes; security concerns adversarial compromise of assets or boundaries; misuse concerns requests or uses outside an application's acceptable scope. The same output can involve more than one pathway, but each requires its own control.
+:::
+
+## Level 1 - A safeguard addresses a defined failure
+
+Misuse concerns what a user may ask the system to do. Security concerns an adversary who manipulates inputs, tools, retrieval content, credentials, or surrounding infrastructure. Responsible use concerns whether the intended task has appropriate human oversight, redress, data handling, and accountability. The same output can be acceptable in one setting and unacceptable in another because the user, action, and consequences differ.
+
+```{python}
+#| label: fig-risk-path
+#| fig-cap: "A responsible-use assessment links a user action and system capability to an affected asset, consequence, safeguard, and residual risk."
+#| fig-alt: "A flow diagram connects user action, model or tool behaviour, asset, consequence, safeguard, and review."
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
+plt.style.use("seaborn-v0_8-whitegrid")
+fig,ax=plt.subplots(figsize=(9,3));ax.axis("off")
+for i,(l,c) in enumerate([("action","#24527a"),("system\nbehaviour","#7655a6"),("asset","#d97745"),("safeguard","#3a9188"),("review","#24527a")]):
+ x=.2+i*1.75;ax.add_patch(Rectangle((x,1),1.2,.52,facecolor=c,edgecolor="white"));ax.text(x+.6,1.26,l,ha="center",va="center",color="white",fontsize=9)
+ax.set_xlim(0,9);ax.set_ylim(.5,2);plt.show()
+```
+
+## Level 2 - Threat models identify trust boundaries
+
+Prompt injection occurs when untrusted content attempts to redirect a model or tool from the application's intended instructions. Retrieval, web pages, documents, tool outputs, and user text can all be untrusted. Treating retrieved text as if it were a trusted instruction is a design error. The application should separate data from authority, restrict tool permissions, validate arguments, and require confirmation before consequential actions.
+
+The threat model should identify the attacker capability and the asset at risk. A malicious document might try to make a retrieval assistant reveal a secret, send an unauthorised message, or alter a database query. The relevant test is not whether the model notices a particular phrase, but whether the application preserves the permission boundary when hostile content is present. Tool outputs must be parsed as data and validated before reuse as an instruction or action.
+
+Threat modelling should also distinguish accidental and deliberate failure. A user can paste confidential information without malicious intent; a model can misunderstand a policy even when all inputs are benign; an attacker can exploit the same interface deliberately. The response differs across these cases, but each needs a pathway from input to affected asset, consequence, detection method, and control. A broad label such as “unsafe output” obscures the intervention that is actually required.
+
+Data exposure has separate routes: training memorisation, prompt and conversation retention, retrieval access, logs, caches, administrator access, and connected tools. Each route has different controls. A policy that focuses only on model output filtering can leave the more direct access path untouched.
+
+Data governance begins before deployment. Define what data may be collected, why it is needed, which fields are sensitive, who can access raw and derived records, how long each is retained, and how deletion or correction requests are handled. This extends the documentation of collection, composition, and intended use proposed for datasets [@gebru2021datasheets] to records created while a service operates. Test access controls with accounts that have different roles. Redaction should be evaluated for the data formats the service actually receives, including attachments, tool responses, and quoted material, rather than on a narrow set of clean examples.
+
+```{python}
+#| label: fig-trust-boundaries
+#| fig-cap: "Prompt injection risk arises where untrusted user or retrieved content crosses into model and tool decisions; permissions and validation should sit at the boundary."
+#| fig-alt: "User and retrieved documents enter an untrusted zone; a model, policy check, and limited tool sit in a trusted application zone."
+fig,ax=plt.subplots(figsize=(8,3.5));ax.axis("off")
+for x,l,c in [(.4,"user /\nretrieval","#d97745"),(2.5,"model","#7655a6"),(4.3,"policy +\nvalidation","#3a9188"),(6.3,"limited\ntool","#24527a")]:ax.add_patch(Rectangle((x,1.2),1.35,.58,facecolor=c,edgecolor="white"));ax.text(x+.68,1.49,l,ha="center",va="center",color="white",fontsize=9)
+ax.set_xlim(0,8);ax.set_ylim(.6,2.4);plt.show()
+```
+
+```{python}
+request={"tool":"calendar.read","scope":"own events","confirmation":False}
+allowed=request["tool"]=="calendar.read" and request["scope"]=="own events"
+print("authorised:",allowed)
+```
+
+## Level 3 - Safeguards require tests and records
+
+Safeguards can include authentication, least-privilege tool scopes, rate limits, content filters, structured outputs, human confirmation, retrieval provenance, output checks, and incident logging. Each has a coverage boundary and possible bypass. Test them with benign adversarial cases, representative user tasks, and failure scenarios that do not expose real secrets or harm people. Record model, prompt, policy, tool, retrieval, evaluator, and deployment versions.
+
+Safety evaluation should specify a threshold and its consequence. A high block rate may reduce an intended service; a low block rate may leave a dangerous pathway open. Report false refusals, false acceptances, evaluator disagreement, the tested population, and the decision owner. For tool-enabled systems, evaluate the completed action and its authorisation record, not only the model's textual response before a tool call.
+
+### Evaluation should follow the proposed use
+
+An evaluation population is not simply a benchmark name. Define the users, requests, languages, data types, tools, and consequence levels that the deployment will cover. Include cases that the service should decline, route to a human, or handle through a constrained workflow. If a high-consequence decision is proposed, compare the system against the relevant existing process and specify which person or institution remains accountable for the final action.
+
+Safety metrics should be decomposed by harm pathway. A result on harmful-content refusal does not measure unauthorised tool use. A prompt-injection test does not measure whether stored conversations can be accessed by the wrong account. A data-leakage test does not measure discriminatory error in a classification workflow. The assurance case should connect each claim to the test that supports it and name the untested pathways.
+
+```{python}
+assurance={"claim":"tool actions require user authority","evidence":"permission-boundary tests","limit":"unseen connector behaviour","owner":"service lead","review":"quarterly"}
+print(assurance)
+```
+
+Red-team exercises are useful when they test an agreed threat model and produce a repairable finding. Preserve the scenario, system version, observed path, safeguard behaviour, severity assessment, corrective action, and regression test. Do not publish operational details that would make a harmful bypass easier, but do retain enough internal evidence to establish that a claimed control was tested.
+
+```{python}
+#| label: fig-defence-layers
+#| fig-cap: "Layered safeguards place different controls at access, input, model, tool, output, and human-review boundaries."
+#| fig-alt: "Six stacked layers label authentication, input handling, model policy, tool permission, output checks, and human review."
+fig,ax=plt.subplots(figsize=(7,4));ax.axis("off")
+for i,(l,c) in enumerate([("authentication","#24527a"),("input handling","#7655a6"),("model policy","#3a9188"),("tool permission","#d97745"),("output checks","#24527a"),("human review","#3a9188")]):ax.add_patch(Rectangle((1,3.3-i*.48),5,.35,facecolor=c,edgecolor="white"));ax.text(3.5,3.48-i*.48,l,ha="center",va="center",color="white")
+ax.set_xlim(0,7);ax.set_ylim(0,4);plt.show()
+```
+
+## Level 4 - Governance makes decisions reviewable
+
+Governance assigns ownership for approving a use case, defining unacceptable outcomes, reviewing evaluation evidence, managing data retention, responding to incidents, and pausing or withdrawing a system. It should also specify what users can contest, how errors are corrected, and when a human must make the final decision. Aggregate safety scores are insufficient where harms are concentrated in one population or workflow.
+
+A decision record should state the intended use, excluded uses, affected groups, evidence reviewed, residual risks accepted, accountable owner, review date, and trigger for reconsideration. This permits a later reviewer to see whether a system changed beyond its approval boundary. It also distinguishes an organisational decision from a property claimed for the model.
+
+Redress needs an operational path. Users and affected parties should be able to report an error, obtain a correction where possible, and receive a response proportionate to the consequence. Incident analysis should ask whether the failure arose from model behaviour, interface design, data access, tool permission, or inadequate human review; the corrective action follows from that diagnosis.
+
+Governance also needs a review cadence. A model, retrieval corpus, connected tool, policy, or user population can change after the original approval. Set review dates and change triggers, such as a new high-consequence workflow, a material model update, a sustained drift signal, or an incident. Reassessment should revisit the original threat model and decision record, not merely confirm that the service remains available.
+
+### Approval has a scope boundary
+
+An approval should cover a named system configuration and use case, not a model in the abstract. Changing a model provider, enabling a new tool, adding a retrieval corpus, extending access to another user group, or changing retention can alter the threat model. Classify these changes before release: some may be routine configuration changes, while others require a new evaluation, privacy review, or decision by the accountable owner.
+
+Document residual risk in language that supports a decision. State the plausible failure, affected asset or person, control in place, evidence of its performance, remaining uncertainty, and the action if the risk materialises. This is more useful than a generic statement that a system is “safe”, because it permits users and reviewers to see what was accepted and why.
+
+### User communication is part of the control
+
+Users need to know when an output is generated, what sources or tools were used where this matters, what data will be retained, and when a response should not be relied upon. Interfaces should make escalation and correction possible without forcing users to reveal unnecessary personal information. Where an action is blocked or delayed, a clear explanation can prevent unsafe workarounds and gives the organisation evidence about a safeguard's practical cost.
+
+Post-incident communication should separate known facts from open investigation. Preserve records needed for accountability, correct the immediate exposure or erroneous action, notify affected parties according to the consequence and applicable policy, and test the corrective change against the pathway that produced the incident. Closing an incident because the visible output has stopped does not establish that the underlying access or governance failure has been repaired.
+
+### Map harms to assets, actors, and controls
+
+Safety and security work becomes actionable when a risk statement identifies who can be affected, what asset is at stake, what the system does, and how a failure reaches a consequence. The asset may be a person's privacy, an organisation's records, a user's autonomy, a financial resource, a physical environment, or the integrity of a decision process. The actor may be an ordinary user, an authorised operator acting in error, a malicious outsider, a compromised tool, or a model component responding to an ambiguous instruction.
+
+The same capability can sit in different harm pathways. A summarisation model may omit a material qualification in an internal draft, expose a confidential paragraph through a retrieval error, or produce a persuasive but unsupported public statement. Each pathway has a different control: review and source citation for the first, permission and retrieval isolation for the second, and publication workflow and accountability for the third. A single “safety score” cannot show whether these controls are present or effective.
+
+```{python}
+risk_paths=[
+ {"asset":"private document","path":"retrieval permission error","control":"account-bound access check"},
+ {"asset":"financial action","path":"injected tool argument","control":"schema validation plus confirmation"},
+ {"asset":"user decision","path":"unsupported confident answer","control":"evidence display and human review"},
+]
+for path in risk_paths: print(path)
+```
+
+### Misuse analysis requires a proportionate response
+
+Some requests are clearly outside an application's intended use. Others are legitimate in one context and harmful in another. A chemistry explanation may support education or facilitate an unsafe action; a document-analysis tool may be appropriate for an authorised employee and inappropriate for an unverified account. The response should reflect the capability, user context, available evidence, and consequence rather than rely on a brittle keyword list.
+
+Define the intended use, excluded use, escalation route, and uncertainty policy before release. A refusal should be evaluated for both false acceptance and false refusal. It should not expose sensitive details, but it can explain the available safe alternative or route the user to an authorised process. For a tool-enabled service, blocking text alone is insufficient if an equivalent tool action remains available through a different prompt or retrieved instruction.
+
+### Security controls need adversarial testing
+
+Prompt injection is one way untrusted content can alter a system. Other paths include malicious file attachments, compromised retrieval sources, tool-output manipulation, credential leakage, insecure logging, dependency compromise, and interface confusion that causes a user to approve an action they do not understand. The threat model should state which actors can control each input and which permissions the system holds at that boundary.
+
+Test controls with safe adversarial scenarios. For example, place hostile instructions in a retrieved document and verify that the model can quote or summarise the document without treating it as authority. Provide malformed tool output and verify that parsers reject it. Attempt an action with a token that lacks the required scope. Test a confirmation interface with an ambiguous request. Preserve the outcome, version, and residual weakness for regression testing. These tests assess the application boundary, not only the model's ability to identify suspicious wording.
+
+### Sensitive data requires lifecycle controls
+
+Data protection covers collection, transmission, processing, storage, review, retention, sharing, and deletion. A model may receive sensitive information in a prompt, an image, a retrieved record, a tool response, a cache entry, or a log. Identify the purpose for each field and avoid retaining material merely because it could be useful later. Separate production access from debugging access, and ensure that support or evaluation staff do not receive broader data than their role requires.
+
+Deletion and correction procedures should be tested. A request may require removal from a retrieval index, cache, conversation store, audit log, derived dataset, or access-control list. Some records may need retention for legal, security, or accountability reasons; if so, the policy should state the basis, access restriction, and duration. A generic promise that data are “secure” does not explain how a system handles these distinct stores.
+
+### Human oversight must have authority and information
+
+Human review is useful only when the reviewer can understand the decision, has enough evidence to challenge it, and has authority to change the outcome. A reviewer who receives a fluent model answer without source material, uncertainty, tool trace, or time to inspect cannot provide meaningful oversight. Define the review trigger, materials shown, time budget, escalation authority, and record of the final decision.
+
+The human role changes by workflow. In a low-consequence creative application, it may be the user's choice to regenerate or discard an output. In a high-consequence administrative process, an authorised professional may need to make the final decision and document reasons. Do not describe these different arrangements with one generic “human in the loop” label. The system should be evaluated with the actual oversight procedure it will use.
+
+### Fairness and access need task-specific evidence
+
+An AI system can perform differently across language, disability-related access need, geography, device type, image quality, writing style, or institutional role. The relevant groups and fairness criteria depend on the task; Model Cards similarly require evaluation to state its population, factors, and limitations [@mitchell2019]. Start by asking whose inputs, outcomes, burdens, and remedies could differ. Then collect or construct evaluation slices that make those differences measurable, while avoiding claims about groups that the available data cannot support.
+
+Assess not only error rates but also access to the service, refusal patterns, latency, escalation, and the quality of redress. A system that has similar average accuracy but consistently routes one language group to a slower fallback has an operational disparity. A system that blocks legitimate requests from a group at a high rate has a different problem from one that produces more incorrect answers. Report the mechanism and consequence rather than applying a generic fairness label.
+
+### An assurance case links a decision to evidence
+
+An assurance case is a structured account of why a system is considered acceptable for a stated use. It does not assert that risk is absent. It identifies a claim, the evidence that supports it, the assumptions that limit it, the controls that reduce a failure path, the residual risk, and the accountable decision maker. The format is useful because it exposes gaps: a claim about tool safety may have evidence from permission tests but no evidence about a new connector; a claim about data handling may cover prompts but omit caches or evaluation exports.
+
+Keep the assurance case proportionate to consequence. A small internal drafting tool may need a concise use boundary, access rule, and incident contact. A system that affects eligibility, money, health, safety, legal status, or public information needs stronger evidence, independent review where appropriate, and a clear route for correction or appeal. The standard is not one document length; it is whether the evidence matches the harm pathway and decision consequence.
+
+```{python}
+assurance_case={
+ "use":"authorised document triage", "claim":"no write action without user authority",
+ "evidence":["scope tests","injection tests","confirmation audit"],
+ "assumptions":["connector schema unchanged"], "residual_risk":"novel interface confusion",
+ "owner":"service manager", "review_trigger":"new tool or high-severity incident"
+}
+print(assurance_case)
+```
+
+### Change management reopens the relevant evidence
+
+An approval cannot be transferred automatically to a changed system. A model update can alter refusal and tool-use behaviour. A new retrieval corpus can introduce confidential, malicious, or low-quality material. A different prompt template can change output format and grounding. A new user population can alter consequence and accessibility needs. Classify changes according to their likely effect, then specify whether the existing evaluation is sufficient, whether a regression suite is required, or whether the use case must be reviewed again.
+
+Preserve a versioned decision record: system components, intended use, excluded use, evaluators, results, residual risk, owners, approvals, and date. Link incidents and user complaints to that record. This allows a reviewer to establish which configuration was authorised at the time of a decision and whether a later change moved the system beyond its evaluated boundary.
+
+### Transparency should support contestability
+
+Users do not need every implementation detail, but they need information that changes how they can act. Explain when an output is automated, what input sources it used when relevant, what it cannot determine, whether an action will be taken, what data is retained, and how to seek correction or human review. Avoid notices that merely shift responsibility to users while withholding the evidence required to identify an error.
+
+Contestability is especially important when a system influences another person's options or access. Provide a route to challenge an output, submit corrected information, understand the review decision, and obtain a response within a stated process. Measure whether this route is accessible across languages, devices, and user roles. A remedy that exists only in policy but cannot be reached in practice is not an effective safeguard.
+
+### A responsible-use conclusion is conditional
+
+The evidence in this chapter supports conditional statements. A system may be acceptable for authorised users, a specific data source, limited tool scopes, a defined workflow, and a stated review process. It may be inappropriate when permissions broaden, new data enters retrieval, users need an appeal, or the consequence becomes higher. The conditions should be visible to operators and users, then revisited as the system changes.
+
+This does not make safety analysis an obstacle to technical work. It makes the relevant technical work visible: permission checks, data isolation, evaluation design, logging controls, interface decisions, version records, and recovery procedures. Chapter 48 supplies the operational infrastructure for many of these controls. Together, the two chapters establish that responsible use is maintained through ongoing evidence and decisions, not attached to a model at release.
+
+The final question for every deployment is therefore specific: which risks remain, who has accepted them, what evidence supports that decision, and what event will require the decision to be revisited? Recording and testing that answer is a practical form of accountability.
+
+It also provides a durable basis for independent review, user remedy, and organisational learning after a system changes or an incident occurs.
+
+Responsible use is therefore a claim about an organisation's choices under stated conditions. It can be audited through records of intended and excluded uses, evaluation evidence, access decisions, residual risk, incident response, and remedies. It should not be presented as a trait automatically supplied by a model architecture or a content filter.
+
+```{python}
+#| label: fig-safety-evidence
+#| fig-cap: "A deployment decision should connect threat model, safeguards, evaluation results, residual risks, accountable owner, and incident response."
+#| fig-alt: "A decision record table has fields for threat, control, test result, residual risk, owner, and response."
+fig,ax=plt.subplots(figsize=(8,2.8));ax.axis("off");table=ax.table(cellText=[["prompt injection","tool allowlist","blocked known test","novel bypass","service owner","disable tool"],["data exposure","redaction","sample audit","context leak","privacy lead","delete and notify"]],colLabels=["threat","control","evidence","residual risk","owner","response"],loc="center");table.auto_set_font_size(False);table.set_fontsize(7);table.scale(1,1.5);plt.show()
+```
+
+```{python}
+#| label: fig-incident-loop
+#| fig-cap: "Incident handling records detection, containment, investigation, user remedy, corrective change, and regression testing."
+#| fig-alt: "A circular six-step process connects detection, containment, investigation, remedy, correction, and regression testing."
+fig,ax=plt.subplots(figsize=(6,3.8));ax.axis("off");
+for i,l in enumerate(["detect","contain","investigate","remedy","correct","retest"]):ax.text(3+2*np.cos(i*np.pi/3),2+1.1*np.sin(i*np.pi/3),l,ha="center",va="center",bbox={"boxstyle":"round","fc":"#e7edf1"})
+ax.set_xlim(.3,5.7);ax.set_ylim(.4,3.6);plt.show()
+```
+
+## Common misconceptions
+
+- **A refusal solves a security problem.** Tool permissions and trust boundaries remain necessary.
+- **Retrieved text is trusted because it came from a database.** Its source and authority must be assessed.
+- **A safety benchmark covers deployment risk.** Live workflows, users, and integrations add failure paths.
+- **Logging is harmless by default.** It can itself create data-exposure risk.
+
+## Exercises
+
+1. Define a protected asset for an AI service.
+2. Write a prompt-injection threat path.
+3. Identify one untrusted input boundary.
+4. Specify a least-privilege tool scope.
+5. Design a confirmation rule for a consequential action.
+6. List a safeguard's bypass condition.
+7. Define a benign adversarial test.
+8. State a logging retention decision.
+9. Assign an owner to a residual risk.
+10. Design an incident-containment action.
+11. Explain why a filter is not a governance process.
+12. Identify a workflow needing human final review.
+13. Write a redress mechanism for an incorrect output.
+14. Compare misuse and security risk.
+15. Specify fields in a safety decision record.
+16. Summarise Part VI's systems boundary.
+
+## Summary
+
+Responsible AI deployment joins safeguards to explicit threats, evidence, ownership, and response. Security boundaries, data handling, and human accountability cannot be inferred from model quality alone.
+
+## Closing perspective
+
+The handbook has followed machine-learning systems from prediction and optimisation to representations, reasoning procedures, deployment, and governance. Across those levels, a model claim is only as strong as the task definition, evidence, implementation conditions, and limits attached to it. The same discipline applies when the system changes: state the mechanism, measure the relevant outcome, record the resources and risks, and assign responsibility for decisions that the model cannot make on its own.

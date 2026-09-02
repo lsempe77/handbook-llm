@@ -1,0 +1,233 @@
+---
+title: "GRPO and Related Training Methods"
+subtitle: "Group-relative advantages for reasoning rollouts"
+---
+
+## Chapter orientation
+
+### Why this chapter matters
+
+Reinforcement learning for reasoning requires a policy update signal for sampled rollouts. Group Relative Policy Optimisation (GRPO) samples several completions for the same prompt, compares their rewards within that group, and uses the relative results to increase or decrease policy probability. The group provides a local baseline, avoiding a separately learned value model in the basic formulation.
+
+This chapter gives the mechanism and its limits. It does not reproduce frontier training data, infrastructure, or confidential procedures. The educational implementation uses small arrays to make the group-relative calculation inspectable.
+
+### Learning objectives
+
+By the end of this chapter, you should be able to:
+
+- define rollout group, reward, group mean, group standard deviation, and advantage;
+- calculate normalised group-relative advantages;
+- explain the role of a reference policy and clipping constraint;
+- identify zero-variance groups and reward-hacking limits; and
+- specify a small GRPO experiment and audit record.
+
+### Running group
+
+One prompt produces four rollouts. An exact verifier assigns rewards. Each rollout is compared with others from the same prompt rather than against a global reward scale.
+
+```{python}
+#| label: fig-grpo-group
+#| fig-cap: "GRPO samples several rollouts for one prompt, evaluates their rewards, computes within-group advantages, and updates the policy relative to a reference."
+#| fig-alt: "One prompt branches to four rollouts with rewards, then a group-normalisation step and policy update."
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle, FancyArrowPatch
+plt.style.use("seaborn-v0_8-whitegrid")
+blue,teal,orange,purple,grey="#24527a","#3a9188","#d97745","#7655a6","#5f6b76"
+fig,ax=plt.subplots(figsize=(9.5,3.5)); ax.axis("off")
+ax.add_patch(Rectangle((.3,1.4),1.3,.55,facecolor=blue,edgecolor="white")); ax.text(.95,1.67,"prompt",ha="center",va="center",color="white")
+for i,r in enumerate([1,0,1,0]):
+    x=2.1+i*1.15; ax.add_patch(Rectangle((x,1.4),.9,.55,facecolor=teal if r else orange,edgecolor="white")); ax.text(x+.45,1.67,f"r={r}",ha="center",va="center",color="white")
+ax.add_patch(FancyArrowPatch((6.85,1.67),(7.65,1.67),arrowstyle="-|>",color=grey,mutation_scale=11)); ax.add_patch(Rectangle((7.75,1.4),1.3,.55,facecolor=purple,edgecolor="white")); ax.text(8.4,1.67,"advantages",ha="center",va="center",color="white")
+ax.text(4.7,.55,"Each rollout's reward is interpreted relative to its prompt-specific group.",ha="center",color=grey); ax.set_xlim(0,9.5); ax.set_ylim(.2,2.4); plt.show()
+```
+
+::: {.concept-box .concept-core #concept-grpo data-term="GRPO" data-domain="Reasoning models"}
+**GRPO.** Group Relative Policy Optimisation samples several completions for the same prompt and uses their relative rewards to construct an update signal. Group construction and reward variation are part of the method.
+:::
+
+## Level 1 - Intuition
+
+### Relative rewards provide a local comparison
+
+For a prompt with several rollouts, GRPO gives positive advantage to rewards above the group average and negative advantage to rewards below it. If one candidate is verifier-correct and others are not, the update favours the successful candidate. The signal is prompt-specific: a reward of one can be excellent in a difficult group and uninformative in a group where every rollout succeeds.
+
+```{python}
+rewards=np.array([1.,0.,1.,0.])
+mean=rewards.mean(); std=rewards.std()
+advantages=(rewards-mean)/(std+1e-8)
+print("mean",mean,"advantages",np.round(advantages,3))
+```
+
+### A group is a prompt-level experimental unit
+
+All rollouts in a GRPO group must answer the same task instance under a declared prompt and tool state. Grouping completions from different prompts would make the local baseline reflect task difficulty, answer format, or verifier coverage as well as policy variation. The prompt identifier, prompt template, retrieval context, tool versions, and sampling policy should therefore be fixed within the group and retained in the rollout record.
+
+The grouping decision also defines what counts as a comparison. A system may group independently sampled completions, completions with different random seeds, or completions produced from several permitted prompt variants. The latter can be useful for a defined robustness objective, but it no longer estimates variation under one fixed prompt. State the grouping unit before training and preserve it when reporting group statistics or comparing an update with another method.
+
+## Level 2 - Mechanics
+
+### The group-relative advantage
+
+For rewards \(r_1,\ldots,r_G\), a common educational form is \(A_i=(r_i-\bar r)/(s_r+\epsilon)\). The normalisation reduces sensitivity to reward scale within a group. It does not make the reward correct, independent, or comparable across different prompt distributions.
+
+```{python}
+#| label: fig-advantages
+#| fig-cap: "Within a rollout group, rewards above the group mean receive positive advantages and rewards below it receive negative advantages."
+#| fig-alt: "A bar chart compares four rewards with their corresponding normalised advantages."
+fig,ax=plt.subplots(figsize=(7,3.8)); ax.bar(np.arange(4)-.18,rewards,.35,label="reward",color=teal); ax.bar(np.arange(4)+.18,advantages,.35,label="advantage",color=purple); ax.axhline(0,color=grey,lw=.8); ax.set_xticks(range(4),["rollout 1","2","3","4"]); ax.legend(); ax.set_title("Group-relative rewards"); plt.tight_layout(); plt.show()
+```
+
+When every reward is identical, the standard deviation is zero and the group contains no relative learning signal. Adding a small epsilon prevents numerical failure but does not create information. The data pipeline should record such groups and the policy used for skipping or handling them.
+
+```{python}
+flat=np.array([1.,1.,1.,1.])
+print("flat-group advantages:",(flat-flat.mean())/(flat.std()+1e-8))
+```
+
+### Group size changes coverage and the stability of the local baseline
+
+Larger groups can increase the chance of observing both successful and unsuccessful rollouts, which creates a relative signal on sparse-reward tasks. They also consume more generation and verifier budget per prompt. A large group of near-duplicate completions may still have little effective diversity, while a small group can produce a highly variable mean and standard deviation. Report group size together with duplicate rate, answer diversity, completion length, and the fraction of groups with mixed rewards.
+
+The appropriate group size depends on the reward and task. With an exact verifier and a difficult problem, a small group may be uniformly rejected; with an easy task, a large group may be uniformly accepted. Neither case identifies an update direction. Changing group size after inspecting training outcomes changes the learning signal and should be treated as an experimental change rather than a minor throughput adjustment.
+
+The comparison is deliberately within prompt. A raw reward can vary because one problem is easier than another, because a verifier is stricter for one answer form, or because a reward model has different scale across topics. Group-relative advantages remove part of that prompt-level variation. They do not establish that two prompts contribute equally useful training information. Inspect group means, standard deviations, acceptance rates, and repeated candidates before aggregating an update.
+
+```{python}
+#| label: fig-group-signal
+#| fig-cap: "Groups with mixed rewards provide relative learning signal, whereas uniformly accepted or rejected groups have near-zero group-relative advantages."
+#| fig-alt: "Three small bar charts show mixed, all-correct, and all-incorrect reward groups, with only the mixed group displaying variation."
+groups=[np.array([1,0,1,0]),np.array([1,1,1,1]),np.array([0,0,0,0])]
+titles=["mixed rewards","all accepted","all rejected"]
+fig,axes=plt.subplots(1,3,figsize=(9,3),sharey=True)
+for ax,g,title in zip(axes,groups,titles):
+    ax.bar(range(1,5),g,color=[teal if r else orange for r in g]); ax.set_title(title); ax.set_xticks(range(1,5)); ax.set_ylim(0,1.15)
+axes[0].set_ylabel("verifier reward"); plt.tight_layout(); plt.show()
+```
+
+### Reward transformation and ties need an explicit policy
+
+The raw reward may be binary, graded, clipped, length-adjusted, or combined with a penalty for an invalid tool call. GRPO normalisation acts on the value that enters the group calculation, so reward transformations determine the relative ordering that the policy learns from. A length penalty can discourage excessive traces but may also punish a valid longer solution; a format penalty can prevent parser failures but may dominate a weak outcome score. Report each component separately before presenting the transformed reward.
+
+Ties are common with binary rewards. A mixed group can contain several equally rewarded completions with different quality under an unmeasured property, while a flat group has no relative advantage at all. The training policy may skip flat groups, retain them for another objective, or collect additional rollouts up to a fixed limit. Whichever policy is used, it should be applied before outcome evaluation and not adjusted selectively for prompts that later appear difficult.
+
+## Level 3 - Policy constraints
+
+### Updates are constrained relative to a reference
+
+The policy probability ratio compares the updated policy with the rollout or reference policy. Clipping or a KL-style penalty limits large changes that could exploit finite rewards or destabilise training. These controls do not validate the reward; they limit the size of a policy move under a chosen measure.
+
+```{python}
+old_prob=np.array([.25,.25,.25,.25]); new_prob=np.array([.35,.15,.35,.15])
+ratio=new_prob/old_prob
+clipped=np.clip(ratio,.8,1.2)
+print("ratio",ratio,"clipped",clipped)
+```
+
+### Sampling, old, and reference policies answer different questions
+
+The sampling or old policy generated the rollout and supplies the probability in the importance ratio. A reference policy supplies a behavioural anchor through a KL-style term or related constraint. They may be the same at the start of an iteration, but they need not remain the same across updates. Confusing them makes it unclear whether a ratio measures change from the data-generating policy or distance from a fixed instruction-following reference.
+
+The log-probability record must use the exact generated tokens, including termination and any tool-call representation that the policy models. A mismatch between the stored rollout and the tokens scored by the updated policy changes the ratio without representing a learning effect. Clipping methods provide an example of why this bookkeeping matters: the constraint depends on the comparison policy and the likelihood of the observed action sequence [@schulman2017proximal].
+
+```{python}
+#| label: fig-clipping
+#| fig-cap: "A clipped policy ratio limits the update contribution of a rollout whose probability changes too far from the reference behaviour."
+#| fig-alt: "A line plots raw probability ratio against a clipped ratio between 0.8 and 1.2."
+x=np.linspace(.4,1.8,100); fig,ax=plt.subplots(figsize=(6.8,3.7)); ax.plot(x,x,label="raw ratio",color=blue); ax.plot(x,np.clip(x,.8,1.2),label="clipped",color=orange); ax.legend(); ax.set_xlabel("raw probability ratio"); ax.set_ylabel("update ratio"); ax.set_title("Illustrative clipping constraint"); plt.tight_layout(); plt.show()
+```
+
+### A small calculation exposes the update direction
+
+Suppose a group contains two accepted and two rejected rollouts. The accepted rollouts receive positive advantages and, within the clipping range, their token probabilities are increased; rejected rollouts receive negative advantages. This description remains conditional on the reward. If the verifier accepts a loophole, the same calculation strengthens the loophole. Reward design decides what counts as success; group normalisation supplies a relative signal; and the constrained update determines how far the policy moves.
+
+For one update, the operational order is straightforward. Fix a prompt batch and the policy used to sample from it. Generate a declared number of completions per prompt, preserving their token log probabilities. Apply the reward or verifier to every completion. Compute group-relative advantages only from the matching prompt group, record groups with no variation, and combine each completion's advantage with its log-probability ratio. Apply the clipping or reference constraint, update the policy, then evaluate a saved checkpoint with an independent task scorer. The update must not use the held-out evaluation outcome as a reward. This order makes clear where a result can change: generation, reward calculation, normalisation, optimisation control, or evaluation.
+
+```{python}
+#| label: fig-grpo-update-directions
+#| fig-cap: "Positive and negative group-relative advantages push rollout probabilities in opposite directions, subject to the policy-ratio constraint."
+#| fig-alt: "Four points show two accepted rollouts increasing in probability and two rejected rollouts decreasing, bounded by a clipping region."
+advantages=np.array([1.,-1.,1.,-1.]); ratios=np.array([1.15,.88,1.12,.90])
+fig,ax=plt.subplots(figsize=(7.4,3.8)); ax.axhspan(.8,1.2,color="#e7edf1",label="clipping region")
+ax.scatter(range(1,5),ratios,s=120,c=[teal if a>0 else orange for a in advantages])
+for i,(a,r) in enumerate(zip(advantages,ratios),1): ax.annotate("increase" if a>0 else "decrease",(i,r),xytext=(0,10 if a>0 else -15),textcoords="offset points",ha="center")
+ax.set_xticks(range(1,5),["rollout 1","2","3","4"]); ax.set_ylabel("new / old probability ratio"); ax.set_ylim(.7,1.3); ax.legend(loc="upper right")
+ax.set_title("Illustrative constrained update directions"); plt.tight_layout(); plt.show()
+```
+
+### Sequence length can change the update weight
+
+A rollout probability is the product of token probabilities, usually handled as a sum of token log probabilities. Longer completions therefore contribute more token-level terms unless the objective uses a stated length normalisation or masking rule. This is not a purely numerical choice. It determines whether a positive advantage reinforces every token in a long trace more strongly than the same advantage in a short trace, and how padding, end tokens, or tool output are treated.
+
+Record the token span receiving the update, the handling of prompt tokens, and any maximum-length truncation. If an exact reward accepts short and long answers equally, a length-sensitive update can still shift the policy towards one form. Check outcome, completion length, and invalid-termination rates together before interpreting a reward gain as an improvement in reasoning quality.
+
+### Optimisation settings remain part of the method
+
+GRPO specifies a relative advantage construction; it does not remove ordinary optimisation choices. Learning rate, batch composition, number of update epochs over a rollout batch, gradient clipping, precision, and checkpoint frequency affect how a group signal changes the policy. A large learning rate or repeated updates over the same small rollout pool can cause a policy move that the reference constraint does not fully contain. A very small update can leave a useful group signal with no measurable effect.
+
+Report these settings with the group construction and evaluate checkpoints over the same held-out task. If one experiment changes group size and learning rate together, it cannot attribute an outcome difference to the group-relative baseline. This is the same control principle used earlier in the book: hold the mechanism under test fixed while varying one declared component.
+
+## Level 4 - Audit and limits
+
+### Group quality determines the learning signal
+
+Groups need candidate diversity, a valid reward, and a documented rollout policy. If all completions share one error, relative normalisation cannot recover a correct answer. If a verifier has a loophole, the policy can learn to exploit it. If groups differ greatly in difficulty, aggregate reward may conceal where updates are useful or harmful.
+
+An audit should retain prompt identifiers or reproducible generators, the complete group before filtering, completion lengths, sampling settings, raw and transformed rewards, flat-group handling, old-policy log probabilities, reference-policy choice, clipping or KL coefficient, and the checkpoint used for independent evaluation. Report group statistics by task slice. A mean reward across all rollouts is insufficient because it hides whether signal came from a small set of prompts or from a change in group composition.
+
+The evaluation should include component ablations. Hold prompts, rollout counts, reward, and independent task scorer fixed while removing group normalisation, changing group size, or varying the reference constraint one at a time. Compare the resulting policy checkpoints under the same inference budget. These comparisons do not prove that one method is universally preferable; they show which component explains the measured change in the declared training setting.
+
+Report the checkpoint-selection rule before comparing ablations. Selecting the highest result from each run on the same small development set can turn optimisation noise into a method claim.
+
+For any sample-efficiency claim, report total rollouts, accepted groups, discarded groups, update steps, and the complete evaluation budget alongside the final outcome.
+
+```{python}
+record={"group_size":4,"reward":"exact verifier","epsilon":1e-8,"ratio_clip":.2,"reference":"policy-v1","flat_groups":"skip"}
+assert {"group_size","reward","reference"} <= set(record)
+print("GRPO record complete")
+```
+
+### An educational implementation is not a frontier reproduction
+
+Small demonstrations can show group normalisation, clipped ratios, and verifier-dependent learning signals. They do not reproduce the data mixtures, distributed rollout systems, model scale, reward engineering, or training stability of large reasoning runs. Report this boundary directly and evaluate a toy method on held-out checkable tasks before interpreting a training curve.
+
+## Common misconceptions
+
+- **GRPO makes rewards objective.** It normalises rewards within a group; reward validity remains separate.
+- **A group baseline guarantees learning.** Flat or correlated groups can contain little useful signal.
+- **Clipping prevents reward hacking.** It limits update size but does not repair a flawed reward.
+- **A toy implementation reproduces frontier reasoning training.** It demonstrates the update logic only.
+- **More rollouts always improve the update.** They add cost and can repeat the same error.
+
+## Exercises
+
+1. Calculate group mean, standard deviation, and advantages for four rewards.
+2. Explain how a flat reward group should be handled.
+3. Compute a clipped ratio for supplied old and new probabilities.
+4. Compare a group-relative advantage with a global reward threshold.
+5. Construct a verifier loophole that a policy could exploit.
+6. List rollout settings required in a GRPO record.
+7. Explain why group diversity matters.
+8. Design a held-out toy evaluation for a GRPO update.
+9. State what a reference constraint does not guarantee.
+10. Show why a group mean is a baseline rather than a verifier.
+11. Compare an all-accepted group with a mixed group for learning signal.
+12. State which records are needed to reproduce one rollout group.
+13. Explain why old-policy and reference-policy comparisons serve different roles.
+14. Design an evaluation that detects a verifier loophole after training.
+15. Describe how duplicated candidates affect group-relative advantages.
+16. Identify the next chapter's distillation focus.
+
+## Summary
+
+GRPO uses relative rewards among several rollouts from the same prompt to construct local advantages for a constrained policy update. Its behaviour depends on rollout diversity, reward validity, group handling, and reference-policy controls. Educational implementations clarify the calculation but do not reproduce frontier-scale systems.
+
+[Chapter 41](41-distillation-and-efficient-reasoning.qmd) examines how slower reasoning systems can train or guide smaller and cheaper students.
+
+## Looking ahead
+
+GRPO can produce a more capable but costly teacher policy. [Chapter 41](41-distillation-and-efficient-reasoning.qmd) examines what can be transferred from that policy to a smaller or cheaper student, and what evidence is lost in the transfer.
+
+## Further reading
+
+GRPO is introduced in DeepSeekMath [@sha2024deepseekmath]. PPO provides a related clipped policy-update background [@schulman2017proximal].
