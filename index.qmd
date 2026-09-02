@@ -1,49 +1,71 @@
 ---
-title: "Welcome"
+title: "Machine Learning Concepts"
+title-block: false
+page-layout: full
 ---
 
-This handbook explains machine-learning concepts at four levels of depth. Each lesson begins with an accessible explanation and then progressively adds mechanism, mathematics, code, and modern systems context.
+<div class="book-hero">
+  <div class="book-hero-copy">
+    <p class="book-eyebrow">A four-level handbook</p>
+    <h1>Machine learning, from first principles to deployed systems.</h1>
+    <p class="book-lead">This handbook explains the mechanisms behind modern machine learning without asking readers to choose between intuition and technical precision. Each chapter develops one idea through explanation, mechanics, mathematics and code, and its consequences for research or production systems.</p>
+    <div class="hero-actions">
+      <a class="hero-primary" href="01-what-is-machine-learning.html">Start with Chapter 1 <span aria-hidden="true">→</span></a>
+      <a class="hero-secondary" href="appendix-concepts.html">Browse the concepts appendix</a>
+    </div>
+  </div>
+  <div class="hero-visual" role="img" aria-label="An abstract neural-network diagram showing inputs passing through model layers to a prediction">
+    <svg viewBox="0 0 520 390" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <defs><linearGradient id="heroGlow" x1="0" x2="1" y1="0" y2="1"><stop stop-color="#d8f3ef"/><stop offset="1" stop-color="#eff4ff"/></linearGradient><linearGradient id="heroLine" x1="0" x2="1"><stop stop-color="#58b5a9"/><stop offset="1" stop-color="#4a75bb"/></linearGradient></defs>
+      <rect x="8" y="8" width="504" height="374" rx="28" fill="url(#heroGlow)"/>
+      <g stroke="url(#heroLine)" stroke-width="2" opacity=".56"><path d="M100 96 L220 70 M100 96 L220 156 M100 96 L220 244 M100 195 L220 70 M100 195 L220 156 M100 195 L220 244 M100 294 L220 156 M100 294 L220 244"/><path d="M242 70 L355 115 M242 70 L355 195 M242 156 L355 115 M242 156 L355 195 M242 244 L355 115 M242 244 L355 195"/><path d="M377 115 L450 155 M377 195 L450 155"/></g>
+      <g fill="#fbfdfd" stroke="#2c7f78" stroke-width="3"><circle cx="88" cy="96" r="18"/><circle cx="88" cy="195" r="18"/><circle cx="88" cy="294" r="18"/><circle cx="232" cy="70" r="20"/><circle cx="232" cy="156" r="20"/><circle cx="232" cy="244" r="20"/></g>
+      <g fill="#fbfdfd" stroke="#3b65a3" stroke-width="3"><circle cx="367" cy="115" r="21"/><circle cx="367" cy="195" r="21"/><circle cx="460" cy="155" r="26"/></g>
+      <g fill="#276c68" font-family="system-ui, sans-serif" font-size="14" font-weight="700"><text x="55" y="344">data</text><text x="183" y="344">representation</text><text x="337" y="344">model</text><text x="427" y="220">prediction</text></g>
+      <path d="M56 42 H126" stroke="#d67547" stroke-width="7" stroke-linecap="round"/><text x="139" y="47" fill="#1d334d" font-family="system-ui, sans-serif" font-size="14" font-weight="700">learn the chain of reasoning</text>
+    </svg>
+  </div>
+</div>
 
-## The four levels
+## A way through a large field
 
-::: {.callout-note}
-### Level 1 - Intuition
+The field is easier to follow when its dependencies are visible. The first part establishes how a model makes a prediction and how training changes its parameters. The next sections develop neural networks, representations and transformers before turning to large-language-model training, reasoning methods, multimodal architectures, deployment and responsible use.
 
-What is the concept, and why does it matter?
-:::
+<div class="pathway-plot" role="img" aria-label="A pathway from foundations through neural networks and transformers to language models, reasoning, multimodal systems, and deployment">
+  <div class="pathway-step pathway-foundations"><span>01</span><strong>Foundations</strong><small>models, loss, optimisation</small></div><div class="pathway-link"></div>
+  <div class="pathway-step pathway-networks"><span>02</span><strong>Neural networks</strong><small>layers, gradients, regularisation</small></div><div class="pathway-link"></div>
+  <div class="pathway-step pathway-transformers"><span>03</span><strong>Transformers</strong><small>vectors, attention, tokens</small></div><div class="pathway-link"></div>
+  <div class="pathway-step pathway-language"><span>04</span><strong>Language models</strong><small>pretraining, tuning, retrieval</small></div><div class="pathway-link"></div>
+  <div class="pathway-step pathway-systems"><span>05</span><strong>Reasoning &amp; systems</strong><small>inference, deployment, safety</small></div>
+</div>
 
-::: {.callout-note}
-### Level 2 - Mechanics
+## Four levels, one argument
 
-How does it work step by step?
-:::
+Every chapter begins with the question the concept solves. The same concept is then developed at progressively greater technical depth. Readers can stop at the level that matches their purpose or continue through the full sequence.
 
-::: {.callout-note}
-### Level 3 - Mathematics & Code
+<div class="levels-grid">
+  <section class="level-card level-one"><p class="level-number">Level 1</p><h3>Intuition</h3><p>What the concept is, what problem it addresses, and what would fail without it.</p></section>
+  <section class="level-card level-two"><p class="level-number">Level 2</p><h3>Mechanics</h3><p>The steps, information flows and design choices that make the method work.</p></section>
+  <section class="level-card level-three"><p class="level-number">Level 3</p><h3>Mathematics &amp; code</h3><p>The notation, objective functions and compact implementations behind the mechanism.</p></section>
+  <section class="level-card level-four"><p class="level-number">Level 4</p><h3>Research &amp; systems</h3><p>What changes at scale, where evidence is limited, and how the method is used in practice.</p></section>
+</div>
 
-How can we express and implement it?
-:::
+## What the book covers
 
-::: {.callout-note}
-### Level 4 - Research & Systems
+<div class="coverage-grid">
+  <a class="coverage-card" href="01-what-is-machine-learning.html"><span class="coverage-index">Part I</span><h3>Learning from data</h3><p>Predictions, losses, gradient descent and backpropagation.</p><span>Chapters 1–4 →</span></a>
+  <a class="coverage-card" href="05-artificial-neuron.html"><span class="coverage-index">Part II</span><h3>Neural networks</h3><p>Layers, activation functions, generalisation and efficient training.</p><span>Chapters 5–15 →</span></a>
+  <a class="coverage-card" href="16-vectors-tensors-representations.html"><span class="coverage-index">Part III</span><h3>Representations &amp; transformers</h3><p>Embeddings, sequence modelling, attention and tokenisation.</p><span>Chapters 16–24 →</span></a>
+  <a class="coverage-card" href="25-next-token-prediction.html"><span class="coverage-index">Part IV</span><h3>Large language models</h3><p>Next-token prediction, pretraining, inference, tuning and retrieval.</p><span>Chapters 25–34 →</span></a>
+  <a class="coverage-card" href="35-what-makes-a-reasoning-model.html"><span class="coverage-index">Part V</span><h3>Reasoning models</h3><p>Evaluation, test-time compute, search, reinforcement learning and distillation.</p><span>Chapters 35–42 →</span></a>
+  <a class="coverage-card" href="43-mixture-of-experts-models.html"><span class="coverage-index">Part VI</span><h3>Architectures &amp; deployment</h3><p>Mixture-of-experts, vision, diffusion, multimodality, monitoring and safety.</p><span>Chapters 43–49 →</span></a>
+</div>
 
-How does it behave in modern research and production systems?
-:::
+<div class="index-callout">
+  <div><p class="book-eyebrow">Reference tool</p><h2>Find a concept without losing its context.</h2><p>The appendix collates the book’s core concepts and distinctions, with links back to the chapters where each one is developed.</p></div>
+  <a class="hero-primary" href="appendix-concepts.html">Open the appendix <span aria-hidden="true">→</span></a>
+</div>
 
-## How to use this book
+## How to use the handbook
 
-You can read every level in sequence, or stop when the explanation reaches the depth you need. The code examples are intentionally small: their purpose is to make the underlying mechanism visible before introducing framework abstractions.
-
-This prototype follows a dependency chain:
-
-1. Gradient descent explains how parameters are updated.
-2. Backpropagation explains how gradients are computed.
-3. The artificial neuron provides the model whose parameters are trained.
-
-## Prerequisites
-
-No prior machine-learning experience is assumed. Basic algebra is useful, but the mathematical requirements are introduced as they become necessary.
-
-## Prototype status
-
-This is the initial prototype of the handbook. It is designed to test the lesson structure, level boundaries, code style, and Quarto presentation before the curriculum is expanded.
+Read the chapters in order if the mechanisms are new to you: later chapters assume the conceptual sequence established earlier. If you already know the basics, use the table of contents to enter at the relevant part, then use the linked concepts appendix to recover any prerequisite. Code examples stay deliberately small. Their purpose is to expose the operation that a library would otherwise hide.
