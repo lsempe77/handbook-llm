@@ -4,28 +4,45 @@ title-block: false
 page-layout: full
 ---
 
-<div class="book-hero">
-  <div class="book-hero-copy">
-    <p class="book-eyebrow">A four-level handbook</p>
-    <h1>Machine learning, from first principles to deployed systems.</h1>
-    <p class="book-lead">This handbook explains the mechanisms behind modern machine learning without asking readers to choose between intuition and technical precision. Each chapter develops one idea through explanation, mechanics, mathematics and code, and its consequences for research or production systems.</p>
-    <div class="hero-actions">
-      <a class="hero-primary" href="01-what-is-machine-learning.html">Start with Chapter 1 <span aria-hidden="true">→</span></a>
-      <a class="hero-secondary" href="appendix-concepts.html">Browse the concepts appendix</a>
-    </div>
-  </div>
-  <div class="hero-visual" role="img" aria-label="An abstract neural-network diagram showing inputs passing through model layers to a prediction">
-    <svg viewBox="0 0 520 390" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <defs><linearGradient id="heroGlow" x1="0" x2="1" y1="0" y2="1"><stop stop-color="#d8f3ef"/><stop offset="1" stop-color="#eff4ff"/></linearGradient><linearGradient id="heroLine" x1="0" x2="1"><stop stop-color="#58b5a9"/><stop offset="1" stop-color="#4a75bb"/></linearGradient></defs>
-      <rect x="8" y="8" width="504" height="374" rx="28" fill="url(#heroGlow)"/>
-      <g stroke="url(#heroLine)" stroke-width="2" opacity=".56"><path d="M100 96 L220 70 M100 96 L220 156 M100 96 L220 244 M100 195 L220 70 M100 195 L220 156 M100 195 L220 244 M100 294 L220 156 M100 294 L220 244"/><path d="M242 70 L355 115 M242 70 L355 195 M242 156 L355 115 M242 156 L355 195 M242 244 L355 115 M242 244 L355 195"/><path d="M377 115 L450 155 M377 195 L450 155"/></g>
-      <g fill="#fbfdfd" stroke="#2c7f78" stroke-width="3"><circle cx="88" cy="96" r="18"/><circle cx="88" cy="195" r="18"/><circle cx="88" cy="294" r="18"/><circle cx="232" cy="70" r="20"/><circle cx="232" cy="156" r="20"/><circle cx="232" cy="244" r="20"/></g>
-      <g fill="#fbfdfd" stroke="#3b65a3" stroke-width="3"><circle cx="367" cy="115" r="21"/><circle cx="367" cy="195" r="21"/><circle cx="460" cy="155" r="26"/></g>
-      <g fill="#276c68" font-family="system-ui, sans-serif" font-size="14" font-weight="700"><text x="55" y="344">data</text><text x="183" y="344">representation</text><text x="337" y="344">model</text><text x="427" y="220">prediction</text></g>
-      <path d="M56 42 H126" stroke="#d67547" stroke-width="7" stroke-linecap="round"/><text x="139" y="47" fill="#1d334d" font-family="system-ui, sans-serif" font-size="14" font-weight="700">learn the chain of reasoning</text>
-    </svg>
-  </div>
-</div>
+::: {.book-hero}
+::: {.book-hero-copy}
+::: {.book-eyebrow}
+A four-level handbook
+:::
+
+# Machine learning, from first principles to deployed systems.
+
+::: {.book-lead}
+This handbook explains the mechanisms behind modern machine learning without asking readers to choose between intuition and technical precision. Each chapter develops one idea through explanation, mechanics, mathematics and code, and its consequences for research or production systems.
+:::
+
+::: {.hero-actions}
+[Start with Chapter 1 →](01-what-is-machine-learning.html){.hero-primary}
+[Browse the concepts appendix](appendix-concepts.html){.hero-secondary}
+:::
+:::
+
+::: {.hero-visual role="img" aria-label="An abstract neural-network diagram showing inputs passing through model layers to a prediction"}
+::: {.neural-visual}
+::: {.neural-column .neural-input}
+[]{.neuron}[]{.neuron}[]{.neuron}
+:::
+::: {.neural-column .neural-hidden}
+[]{.neuron}[]{.neuron}[]{.neuron}
+:::
+::: {.neural-column .neural-model}
+[]{.neuron}[]{.neuron}
+:::
+::: {.neural-column .neural-output}
+[]{.neuron}
+:::
+:::
+
+::: {.neural-labels}
+[data]{.neural-label} [representation]{.neural-label} [model]{.neural-label} [prediction]{.neural-label}
+:::
+:::
+:::
 
 ## A way through a large field
 
