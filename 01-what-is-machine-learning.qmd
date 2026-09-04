@@ -7,7 +7,7 @@ subtitle: "From examples to predictions"
 
 An organisation wants to decide whom to contact about a programme. It has records from earlier outreach and wants an estimate, before making a new contact, of whether each household is likely to take up the offer. The records contain information that is available at that point:
 
-| Household | Age of respondent | Distance to service point | Prior participation | Took up programme? |
+| Household | Age of respondent | Distance to service point | Earlier programme visits | Took up programme? |
 |---|---:|---:|---:|---:|
 | A | 24 | 2.1 km | 0 | 1 |
 | B | 58 | 18.4 km | 1 | 0 |
@@ -25,27 +25,29 @@ The model will describe an association in records like these. It will not establ
 
 ## Level 1 - Intuition
 
-The organisation could write a rule by hand: contact households within five kilometres, for example. A machine-learning model starts differently. It looks for a pattern in the earlier examples and applies that estimated pattern to a household whose outcome is not yet known. The first figure makes that move visible. The coloured points are recorded cases; the star is the new household.
+The organisation could write a rule by hand: contact households within five kilometres, for example. A machine-learning model starts differently. It looks for a pattern in earlier records and applies that estimated pattern to a household whose outcome is not yet known. The first figure uses two of the recorded variables. Before reading the code, notice the practical question: households nearer the service point and with more earlier visits tend to lie in the uptake group, but the pattern is not exact.
 
 ```{python}
 #| label: fig-intuition-pattern
-#| fig-cap: "A model learns a pattern from examples and applies it to a new case."
-#| fig-alt: "Two groups of observations shown in feature space, with a new observation marked separately."
+#| fig-cap: "Illustrative outreach records: travel time and earlier visits provide an imperfect pattern for predicting uptake."
+#| fig-alt: "Recorded households plotted by travel time to the service point and earlier programme visits. Orange points indicate uptake, blue points indicate no uptake, and a teal star marks a household whose uptake is to be predicted."
 import numpy as np
 import matplotlib.pyplot as plt
 
 plt.style.use("seaborn-v0_8-whitegrid")
 blue, teal, orange = "#24527a", "#3a9188", "#d97745"
-rng = np.random.default_rng(7)
+
+# Illustrative records: each row is one earlier household contact.
+no_uptake = np.array([[42, 0], [35, 1], [29, 0], [25, 1], [18, 0], [31, 2], [14, 0]])
+uptake = np.array([[6, 3], [9, 2], [12, 4], [16, 3], [20, 5], [22, 2], [11, 1]])
+new_case = np.array([15, 2])
 
 fig, ax = plt.subplots(figsize=(7.5, 4.2))
-positive = rng.multivariate_normal([6.5, 6], [[1.2, 0.3], [0.3, 1.0]], 45)
-negative = rng.multivariate_normal([3.5, 3.4], [[1.0, 0.1], [0.1, 1.1]], 45)
-new_case = np.array([5.8, 5.2])
-ax.scatter(negative[:, 0], negative[:, 1], color=blue, alpha=0.65, label="examples: no uptake")
-ax.scatter(positive[:, 0], positive[:, 1], color=orange, alpha=0.65, label="examples: uptake")
-ax.scatter(*new_case, color=teal, edgecolor="white", linewidth=1.5, s=120, marker="*", label="new case")
-ax.set(xlabel="Feature 1", ylabel="Feature 2", title="Examples provide a pattern for a new prediction")
+ax.scatter(no_uptake[:, 0], no_uptake[:, 1], color=blue, s=70, alpha=0.75, label="recorded: no uptake")
+ax.scatter(uptake[:, 0], uptake[:, 1], color=orange, s=70, alpha=0.75, label="recorded: uptake")
+ax.scatter(*new_case, color=teal, edgecolor="white", linewidth=1.5, s=180, marker="*", label="household to predict", zorder=3)
+ax.set(xlabel="Travel time to service point (minutes)", ylabel="Earlier programme visits", title="Earlier records provide an imperfect pattern")
+ax.set(xlim=(0, 46), ylim=(-0.4, 5.6), yticks=range(0, 6))
 ax.legend(frameon=False)
 plt.tight_layout()
 plt.show()
@@ -53,7 +55,7 @@ plt.show()
 
 The model does not memorise a label for the new case. It uses the relationship estimated from the examples to assign a prediction.
 
-The figure shows the basic inferential move made by a prediction model. The coloured points are cases for which the outcome is known. The star is a case for which the outcome is not yet known. The model uses the position of the star relative to the observed pattern to produce an output. The output may be a class, a number, or a probability. It is not a statement that the features caused the outcome.
+The figure shows the basic inferential move made by a prediction model. The coloured points are records for which uptake is known. The star is a household whose outcome is not yet known. Its travel time and earlier visits place it near several uptake records, but not on a clean boundary: one household with no uptake is also nearby. A model turns this imperfect pattern into an output, such as a probability of uptake. It does not show that reducing travel time or creating earlier visits would cause uptake.
 
 The model can be wrong in at least two ways. It can miss a pattern that is present in the data, or it can treat a pattern in the development data as if it would continue in new data when it will not. The first problem concerns fitting; the second concerns generalisation. Both are part of the learning problem.
 
