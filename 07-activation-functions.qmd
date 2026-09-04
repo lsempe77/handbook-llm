@@ -3,28 +3,13 @@ title: "Activation Functions and Non-linearity"
 subtitle: "Why depth needs a change of shape"
 ---
 
-## Chapter orientation
+## The problem
 
-### Why this chapter matters
+Chapter 6 showed that layers can create a larger representation. But stacking affine layers alone does not create a richer input-output relationship: the complete stack can still be written as one affine transformation. More matrices are not enough.
 
-Chapter 6 showed how a layer maps an input vector to an output vector. Stacking such layers appears to produce a deeper model, but depth alone does not guarantee a richer function. If every layer applies only an affine transformation, the entire stack can be rewritten as one affine transformation. Additional matrices increase the number of operations without changing the class of functions represented by the network.
+An activation function changes this result by altering each pre-activation before it enters the next layer. The local rule is simple; the consequence is that the network can use different linear relationships in different regions of the input space.
 
-Activation functions alter this result. They transform each layer's pre-activations before those values enter the next layer. This chapter explains how that local operation changes the shape of the complete network, how it affects gradients, and why the choice of activation must be assessed together with architecture, initialisation, numerical precision, and hardware.
-
-### Learning objectives
-
-By the end of this chapter, you should be able to:
-
-- show algebraically why a stack of affine layers remains affine;
-- explain how an activation function creates nonlinear input-output relationships;
-- calculate ReLU, sigmoid, tanh, and GELU outputs for representative inputs;
-- distinguish hidden-layer activations from output transformations;
-- derive the local derivatives used during backpropagation;
-- implement and compare activations in NumPy and PyTorch;
-- explain saturation, inactive ReLU units, and gradient-flow trade-offs;
-- relate activation choice to expressivity, memory traffic, kernel fusion, and modern architectures.
-
-### Running examples
+### The running calculations
 
 The first example continues the layer calculation from Chapter 6. Its pre-activation vector is
 
@@ -47,6 +32,8 @@ The two hidden units introduce changes in slope at $x=-0.5$ and $x=0.5$. Those c
 :::
 
 ## Level 1 - Intuition
+
+Read the two panels as a comparison of possible functions, not as a comparison of model size. The left-hand stack has more than one affine operation but retains one slope. The right-hand network changes slope when its ReLU units switch between inactive and active states.
 
 ### More layers do not help if every layer follows the same straight rule
 
@@ -101,6 +88,8 @@ In a dense hidden layer, the same activation function is normally applied to eve
 An activation between hidden layers expands what the network can represent. A transformation at the output often serves another purpose: sigmoid maps one score to a value between zero and one, while softmax converts several scores into values that sum to one. Those outputs may be used as probabilities when the model, loss, data, and calibration support that interpretation. Bounded output alone does not establish calibration.
 
 The main conclusion at this level is therefore specific: hidden activations prevent a deep network from collapsing into one affine map. The next level examines what several common activation rules do to individual values.
+
+The change in shape comes from a small local rule applied to every coordinate. The next level follows that rule for individual values and distinguishes a hidden-layer activation from an output transformation that may be interpreted as a probability.
 
 ## Level 2 - Mechanics
 
@@ -232,6 +221,8 @@ The two panels describe the same mask. Unit 3 is inactive in the forward pass an
 ReLU and GELU are common hidden activations because their positive side does not approach a fixed upper bound. Sigmoid is useful when a scalar output must lie between zero and one, and it also appears inside gates. Tanh remains useful where a bounded, zero-centred state is wanted. Softmax is usually applied across a vector of output scores, rather than independently to each coordinate. No single activation has the same role in every location.
 
 Mechanically, an activation changes values and local slopes. Level 3 makes these claims algebraic and verifies them in code.
+
+The forward calculation shows where a bend enters the network. The mathematical treatment below then shows the related issue for learning: each activation also has a local derivative that shapes the gradient passed backwards.
 
 ## Level 3 - Mathematics & Code
 

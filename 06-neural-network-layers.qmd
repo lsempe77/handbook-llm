@@ -3,30 +3,13 @@ title: "Neural Network Layers"
 subtitle: "From one output to structured representations"
 ---
 
-## Chapter orientation
+## The problem
 
-### Why this chapter matters
+Chapter 5 gave one weighted combination of the input. One score is rarely enough. A network needs several different views of the same input so that a later computation can combine them. A layer repeats the neuron calculation with different weights and biases and collects the results into a new vector.
 
-An artificial neuron produces one scalar. Neural networks become useful by arranging many neuron-equivalent operations into layers, so that one input vector produces another vector that can be passed to the next stage. The shift from a neuron to a layer changes the notation, the tensor shapes, the parameter count, and the way the computation is executed on hardware.
+This chapter keeps the three-feature calculation from Chapter 5. The point is not to introduce new numbers; it is to see what changes when one input vector produces several outputs at once.
 
-This chapter develops that shift directly. It treats a layer as an affine matrix transformation followed, when appropriate, by an activation. It then shows how layers compose, how batches move through them, how gradients inherit the shapes of parameters, and why wide layers become systems problems. Activation functions appear here only as operations between layers; [Chapter 7](07-activation-functions.qmd) examines their behaviour in depth.
-
-### Learning objectives
-
-By the end of this chapter, you should be able to:
-
-- explain why a layer produces a vector rather than one scalar;
-- distinguish input, hidden, and output layers;
-- calculate every output of a small dense layer;
-- interpret the rows of a weight matrix and the entries of a bias vector;
-- track tensor shapes through one layer, a batch, and a short network;
-- implement the same forward pass with NumPy and PyTorch;
-- calculate layer and network parameter counts;
-- explain how backpropagation produces matrix-shaped gradients;
-- distinguish depth from width; and
-- explain why large layers require accelerator kernels and, in some cases, tensor parallelism.
-
-### Running example
+### The running calculation
 
 The input is the three-feature vector used in [Chapter 5](05-artificial-neuron.qmd):
 
@@ -69,6 +52,8 @@ $$
 :::
 
 ## Level 1 - Intuition
+
+In the diagram, every output unit receives the same three input values, but it uses a different set of weights. Read across one output at a time: each is the Chapter 5 calculation with its own parameters. Read the full right-hand column next: those outputs form the representation passed to the next layer.
 
 ### A layer asks several questions of the same input
 
@@ -138,6 +123,8 @@ The distinction is structural, not evaluative. A wider or deeper network is not 
 The phrase **input layer** usually refers to the values supplied to the network rather than a learned calculation. A **hidden layer** produces an internal representation that is passed onwards. An **output layer** maps the final hidden representation to the form required by the task, such as one regression score or a set of class logits.
 
 These names describe position in the network. The matrix operation can be the same in a hidden layer and an output layer even though their outputs have different interpretations.
+
+The layer has increased the number of values carried forward, but has not changed the basic arithmetic. The next level identifies how a matrix stores all of the individual neuron weights and how its shape determines the input and output interfaces.
 
 ## Level 2 - Mechanics
 
@@ -273,6 +260,8 @@ The adjacent dimensions must match. A network architecture is therefore partly a
 ### Training changes the matrix, not the layer rule
 
 During the forward pass, the layer uses its current $W$ and $b$. Backpropagation calculates a gradient for every matrix and bias entry. The optimiser changes those entries, and the next forward pass uses the updated values. The rule $Z=XW^\top+b$ remains fixed; training changes the parameters inside that rule.
+
+Once the rows, columns, and bias vector are visible, matrix notation becomes a bookkeeping device rather than an additional abstraction. The formalisation below tracks the same calculation for one input and then for a batch.
 
 ## Level 3 - Mathematics & Code
 

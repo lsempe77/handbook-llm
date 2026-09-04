@@ -3,28 +3,13 @@ title: "The Artificial Neuron"
 subtitle: "From weighted inputs to neural-network layers"
 ---
 
-## Chapter orientation
+## The problem
 
-### Why this chapter matters
+Chapter 4 described a network as a chain of small computations through which values move forward and gradients move backward. We now need one concrete computation to place in that chain. An artificial neuron takes several input values, gives each a learned weight, adds a learned baseline, and returns one score.
 
-The preceding chapters treated a model as a parameterised function and used small computation graphs to explain gradients. This chapter examines one of the functions that can appear inside such a graph. An artificial neuron combines input values using learned weights, adds a bias, and usually passes the result through an activation function.
+The name is historical, not biological. A modern artificial neuron is a compact mathematical operation. Its importance is that the same operation can be repeated, trained jointly, and arranged into the layers examined in the next chapter.
 
-The term *neuron* is historical. Early neural-network models drew a loose analogy with biological neurons [@mcculloch1943; @rosenblatt1958]. A modern artificial neuron is better understood as a small mathematical operation. Networks become useful by arranging many such operations into layers and training their parameters jointly.
-
-### Learning objectives
-
-By the end of this chapter, you should be able to:
-
-- distinguish inputs, weights, bias, pre-activation, and activation;
-- calculate a neuron's output step by step;
-- explain how a bias shifts a decision boundary;
-- explain why activation functions are required between linear layers;
-- implement a neuron manually and with `torch.nn.Linear`;
-- move from one neuron to a batch of inputs and a layer of outputs;
-- calculate the parameter count and tensor shapes of a linear layer;
-- connect the operation to the feed-forward blocks used in Transformers.
-
-### Running example
+### The running calculation
 
 We will use three standardised input features from the programme-uptake example introduced in [Chapter 1](01-what-is-machine-learning.qmd):
 
@@ -45,6 +30,8 @@ and bias $b=3$. The example explains the computation; the weights should not be 
 :::
 
 ## Level 1 - Intuition
+
+The diagram should be read as an arithmetic recipe. Each input is multiplied by its own weight; those signed contributions are added with the bias; the resulting score is passed on. The arrows are not claims that one observed feature causes an outcome.
 
 ### Inputs do not contribute equally
 
@@ -114,6 +101,8 @@ plt.tight_layout(); plt.show()
 ```
 
 The second input has the largest magnitude and a negative weight, so it lowers the score by four. The diagram makes a limited computational claim: these values combine to form $z$. It does not establish that the second underlying feature is harmful, important in every context, or causally related to the target.
+
+One neuron gives one score. To reproduce that score, we need to distinguish the inputs, the learned weights, the bias, and the pre-activation before an activation function changes its shape. The next level performs that calculation in order.
 
 ## Level 2 - Mechanics
 
@@ -207,6 +196,8 @@ the running example produces $a=2$. A pre-activation of $-2$ would produce $a=0$
 ### A neuron during training
 
 The forward pass calculates $z$ and $a$. The loss compares the eventual network output with the target. Backpropagation calculates gradients for the weight and bias, and the optimiser updates them. The inputs are data; the weights and bias are parameters. The activation function usually has a fixed form, although some architectures use activations with learned parameters.
+
+The calculation makes the unit inspectable, but the notation is still useful because the same operation must be applied to many observations and later to many output units. The mathematics and code below express that repeated computation compactly.
 
 ## Level 3 - Mathematics & Code
 

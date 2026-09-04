@@ -3,31 +3,17 @@ title: "Building a Small Neural Network"
 subtitle: "From data to updated predictions"
 ---
 
-## Chapter orientation
+## The problem
 
-### Why this chapter matters
+The preceding chapters separated the components of neural-network learning. A useful model has to connect them in the right order: representations pass through layers and activations, a loss compares scores with labels, backpropagation calculates gradients, and an optimiser changes parameters before the next batch arrives.
 
-The preceding chapters separated the components of neural-network learning so that each could be examined directly. A working model must connect them in the correct order. Data enter a forward pass; the model produces scores; a loss compares those scores with labels; backpropagation calculates gradients; and an optimiser updates the parameters. The next batch then passes through a model whose parameters have changed.
+This chapter assembles those operations into one small binary classifier. The synthetic data do not stand in for a real population. They make one property visible: a straight decision boundary is inadequate, while a small network can learn a curved boundary. The task is to inspect the training system, not to claim a benchmark result.
 
-This chapter assembles those operations into one small binary classifier. The example is synthetic and makes no substantive claim about a real population. Its curved class pattern is useful because a linear classifier cannot separate it well, while a small network can represent an appropriate boundary. The objective is to understand and audit the training system, not to maximise benchmark performance.
-
-### Learning objectives
-
-By the end of this chapter, you should be able to:
-
-- identify every stage in a neural-network training loop;
-- trace one observation through two layers, an activation, and a loss;
-- calculate the principal gradients for a two-layer binary classifier;
-- explain why gradients must be cleared before the next update;
-- implement a complete mini-batch training loop in PyTorch;
-- distinguish logits, probabilities, predictions, losses, and evaluation metrics;
-- compare an initial and trained decision boundary;
-- save enough state to resume training rather than merely reload weights;
-- explain how batching, numerical precision, distribution, and reproducibility alter the same basic loop at scale.
-
-### Running example and data boundary
+### The data boundary
 
 The dataset contains 240 two-dimensional observations arranged as two noisy interlocking curves. The label indicates which curve generated an observation. The training set contains 192 observations and the test set contains 48. Input standardisation uses the training-set mean and standard deviation; test-set information is not used to define the transformation.
+
+Before looking at the training loop, inspect the data. The two curves are deliberately arranged so that one straight line cannot separate them. Outlined observations are held out from fitting, so they can later show whether the learned boundary extends beyond the examples used for updates.
 
 ```{python}
 #| label: fig-small-network-data
@@ -84,6 +70,8 @@ The outlined test observations follow the same data-generating process but remai
 
 ## Level 1 - Intuition
 
+The training loop is the point at which the preceding chapters become one procedure. Follow one cycle before reading the implementation: select a batch, calculate scores, measure their error, send gradients backwards, and update the weights that will be used for the next batch.
+
 ### Training is a repeated comparison followed by a correction
 
 A neural network begins with parameter values that do not yet encode the pattern in the data. It processes a batch and produces predictions. The loss measures the disagreement between those predictions and the labels. Backpropagation attributes part of that loss to each parameter, and the optimiser makes a small update intended to reduce future loss.
@@ -124,6 +112,8 @@ The output is a logit rather than a probability. A sigmoid transformation conver
 A falling training loss shows that the optimiser is fitting the training objective. It does not show that the labels are valid, that performance transfers to another population, or that the resulting decision is appropriate. The synthetic example controls the label-generating process and is used only to expose the computation. A real model requires evidence about measurement, generalisation, calibration, errors across relevant groups, and consequences of use.
 
 Level 1 identifies the loop and its evidential boundary. Level 2 follows one observation through the operations that the loop repeats.
+
+The loop gives the sequence, but a reliable implementation needs each stage to retain its own role. The next level traces the objects passed between stages and explains why a prediction, a probability, a loss, and a gradient are not interchangeable.
 
 ## Level 2 - Mechanics
 
@@ -209,6 +199,8 @@ For each batch, an implementation normally clears stored gradients, runs the for
 Evaluation requires no backward pass or optimiser step. The model should be placed in evaluation mode because dropout and batch normalisation behave differently during training. Gradient tracking should also be disabled to reduce memory use. This network contains neither dropout nor batch normalisation, but using the correct pattern prevents errors when the architecture changes.
 
 Level 2 has followed the order of operations. Level 3 writes the same system in matrix notation and executable code.
+
+The mechanics establish the contract for one training step. The mathematics and code below repeat that contract across batches and make the parameter updates observable rather than treating the framework as a black box.
 
 ## Level 3 - Mathematics & Code
 
