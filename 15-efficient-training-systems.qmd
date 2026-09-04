@@ -5,9 +5,9 @@ subtitle: "Matching computation, memory, and communication to the training workl
 
 ## The problem
 
-A loop can be correct and still be impossible to run at the required scale. The model or its activations may not fit in memory; arithmetic units may wait for data; workers may wait for collective communication; or a pipeline stage may be idle. These are different measured limits. Adding devices does not repair a memory-bound operation, and lower precision does not eliminate an unsuitable interconnect.
+The loop in Chapter 14 can produce a valid update on paper and still fail on the machine that must run it. The model or its activations may not fit in memory. Arithmetic units may wait for data, workers may wait for a collective operation, or one pipeline stage may sit idle while another finishes. These failures have different causes, so they require different measurements and different changes.
 
-This final chapter of Part II treats one update as a systems workload: parameters, gradients, optimiser state, activations, temporary buffers, arithmetic, memory traffic, and communication all contribute. Mixed precision, fusion, activation recomputation, parallelism, and sharding each change a particular cost and introduce a particular dependency. Measurement determines which intervention has a plausible mechanism.
+One update is also a systems workload. It holds parameters, gradients, optimiser state, activations, and temporary buffers; it reads and writes memory; it performs arithmetic; and, with several workers, it communicates. Mixed precision, fusion, activation recomputation, parallelism, and sharding each alter some of those costs while introducing a different dependency. A useful intervention follows from the resource that is actually limiting the measured step.
 
 ### Diagnose the limiting resource
 
@@ -50,9 +50,9 @@ The interventions are not interchangeable. Activation recomputation reduces stor
 
 ### Training moves and stores more than model weights
 
-Inference can load weights and produce activations one layer at a time. Training must also retain or reconstruct information needed for backpropagation, store gradients, and maintain optimiser state. Adam commonly keeps first and second moments for every trainable parameter. Mixed-precision implementations may retain higher-precision optimiser state even when forward and backward arithmetic use lower precision.
+The parameter file is not a training-memory estimate. Training must retain or reconstruct information needed for backpropagation, store gradients, and maintain optimiser state. Adam commonly keeps first and second moments for every trainable parameter. Mixed-precision implementations may retain higher-precision optimiser state even when forward and backward arithmetic use lower precision.
 
-For one billion parameters, a two-byte parameter representation occupies about 2 GB before gradients, optimiser moments, master weights, activations, temporary workspaces, or allocator overhead. A statement that a “2 GB model” fits on a 24 GB device therefore does not establish that it can be trained there.
+For one billion parameters, a two-byte parameter representation occupies about 2 GB. That number excludes gradients, optimiser moments, master weights, activations, temporary workspaces, and allocator overhead. A “2 GB model” can therefore exceed a 24 GB device once the training loop is included.
 
 ```{python}
 #| label: fig-memory-accounting

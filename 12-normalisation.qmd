@@ -5,9 +5,9 @@ subtitle: "Choosing the values that define a reference scale"
 
 ## The problem
 
-Chapter 11 used initialisation to make the first forward and backward pass workable. During training, earlier parameter updates can still change the scale and offset reaching later layers. Those changes may be meaningful, but they can also make optimisation sensitive to parameter scale, numerical precision, or the composition of a mini-batch.
+Chapter 11 chose initial weights so that the first forward and backward pass could work. After training begins, updates change the values reaching later layers. A layer may then receive values with a different offset or spread from one batch to the next, even though its own parameters have not changed.
 
-Normalisation constructs a reference from selected values and expresses activations relative to it. Subtracting and dividing are straightforward. The substantive decision is which values may contribute to the reference. Batch normalisation shares statistics across observations; layer normalisation uses values within one observation or token; group normalisation uses channel groups; RMS normalisation rescales a vector without subtracting its mean. These choices create distinct information dependencies and distinct training--inference behaviour.
+Normalisation gives those values a reference scale. The arithmetic is simple: compare a value with a selected set of values, then recalculate it relative to that set. The consequential choice is which values belong in the reference. That choice determines whether one observation can affect another and whether the same rule can be used during training and evaluation.
 
 ### A visible reference choice
 
@@ -63,15 +63,11 @@ The two normalised matrices are not competing calculations of the same quantity.
 **Normalisation.** A transformation that expresses values relative to a selected reference set. The reference can be a batch, one observation, a channel group, or a vector; that choice determines which values influence one another and how training differs from inference.
 :::
 
-::: {.concept-box .concept-distinction #concept-normalisation-variants data-term="Batch, layer, group, and RMS normalisation" data-domain="Training and evaluation"}
-**Batch, layer, group, and RMS normalisation.** Batch normalisation uses statistics across observations. Layer normalisation uses features within one observation or token. Group normalisation uses channel groups, while RMS normalisation rescales a vector without subtracting its mean. These are different reference choices, not interchangeable rescaling labels.
-:::
-
 ## Level 1 - Intuition
 
-### Normalisation changes the coordinate system
+### A value needs a reference
 
-Suppose a temperature is reported as $30$. The number is difficult to interpret without knowing the unit and a relevant range. Saying that it is two standard deviations above the seasonal mean supplies a reference. Normalisation performs a related operation on model activations: it describes a value relative to a set of other values.
+A value of $30$ has little meaning without its unit and a comparison range. A value two standard deviations above a relevant mean tells us more because it supplies a reference. Normalisation does the same for model activations: it describes a value relative to selected other values.
 
 This transformation does not make every activation uninformative or identical. It removes selected location and scale information, then retains the pattern of relative deviations. A value above its reference mean remains positive; a value below it remains negative. Learned scale and shift parameters can subsequently restore a useful magnitude and offset.
 
@@ -143,7 +139,7 @@ ax.set_title("Sampling noise in batch statistics"); ax.legend()
 plt.tight_layout(); plt.show()
 ```
 
-The noise can have a regularising effect, but it also makes behaviour depend on batch construction. When memory constraints force very small batches, batch normalisation can become unreliable. Synchronized batch normalisation enlarges the reference set across devices at the cost of communication.
+The noise can have a regularising effect, but it also makes behaviour depend on batch construction. When memory constraints force very small batches, batch normalisation can become unreliable.
 
 ### Evaluation uses the training reference distribution
 
@@ -174,6 +170,10 @@ Using current evaluation-batch statistics would hide the mean shift and make one
 ### Layer, group, and RMS normalisation avoid batch dependence
 
 Layer normalisation calculates statistics across the feature dimensions of one observation or token [@ba2016layernorm]. Group normalisation divides channels within one observation into groups and normalises each group [@wu2018groupnorm]. RMS normalisation divides by the root mean square within a vector but does not subtract its mean [@zhang2019rmsnorm]. None requires running batch statistics.
+
+::: {.concept-box .concept-distinction #concept-normalisation-variants data-term="Batch, layer, group, and RMS normalisation" data-domain="Training and evaluation"}
+**Batch, layer, group, and RMS normalisation.** Batch normalisation uses statistics across observations. Layer normalisation uses features within one observation or token. Group normalisation uses channel groups, while RMS normalisation rescales a vector without subtracting its mean. These are different reference choices, not interchangeable rescaling labels.
+:::
 
 ```{python}
 #| label: fig-method-comparison

@@ -5,55 +5,23 @@ subtitle: "From one output to structured representations"
 
 ## The problem
 
-Chapter 5 gave one weighted combination of the input. One score is rarely enough. A network needs several different views of the same input so that a later computation can combine them. A layer repeats the neuron calculation with different weights and biases and collects the results into a new vector.
+Chapter 5 turned the three prepared values for one household into one score. That is enough when a calculation is making the final prediction, but an intermediate part of a network often needs several values to carry forward. One value might respond to a pattern involving travel time and earlier contact; another might respond to a different combination of the same information. A later calculation can use all of them.
 
-This chapter keeps the three-feature calculation from Chapter 5. The point is not to introduce new numbers; it is to see what changes when one input vector produces several outputs at once.
+A neural-network layer produces those several values. It repeats the neuron calculation with different learned settings and places the results in a new vector. This chapter keeps the three household inputs from Chapter 5 so that the only new idea is the move from one output to several.
 
 ### The running calculation
 
-The input is the three-feature vector used in [Chapter 5](05-artificial-neuron.qmd):
+The input remains the three-feature vector used in [Chapter 5](05-artificial-neuron.qmd):
 
 $$
 x=(2,4,1).
 $$
 
-Instead of producing one value, the layer has three output units. Its weights and biases are:
-
-$$
-W=
-\begin{bmatrix}
-0.5 & -1 & 2\\
--0.25 & 0.5 & 1\\
-1 & 0.25 & -0.5
-\end{bmatrix},
-\qquad
-b=
-\begin{bmatrix}
-3\\
--1\\
--4
-\end{bmatrix}.
-$$
-
-The numbers are illustrative parameters, not estimated effects. They allow every operation to be checked by hand. The layer will produce the pre-activation vector
-
-$$
-z=(2,\ 1.5,\ -1.5),
-$$
-
-and ReLU will transform it into
-
-$$
-h=(2,\ 1.5,\ 0).
-$$
-
-::: {.concept-box .concept-core #concept-neural-layer data-term="Neural-network layer" data-domain="Foundations" data-symbols="X; W; b"}
-**Neural-network layer.** A shared transformation applied across a batch or sequence of representations. Its weight matrix and bias vector define how input coordinates are combined into output coordinates; broadcasting applies the same bias to each relevant observation. Layer shape determines both the representation interface and the number of trainable parameters.
-:::
+Instead of producing one value, the layer will produce three. For now, it is enough to see that each output uses the same input vector but a different set of learned weights and its own bias. The exact numbers and the compact matrix notation appear after the layer's job is clear.
 
 ## Level 1 - Intuition
 
-In the diagram, every output unit receives the same three input values, but it uses a different set of weights. Read across one output at a time: each is the Chapter 5 calculation with its own parameters. Read the full right-hand column next: those outputs form the representation passed to the next layer.
+In the diagram, every output unit receives the same three input values, but it uses a different set of weights. Follow one arrow pattern to one orange circle: that is the Chapter 5 calculation with its own parameters. Then look at all three orange circles together: they are the values passed to the next calculation.
 
 ### A layer asks several questions of the same input
 
@@ -104,11 +72,15 @@ plt.tight_layout()
 plt.show()
 ```
 
-The diagram is fully connected because each output unit uses all three inputs. The three orange nodes do not vote on one decision. Together they form a three-dimensional output vector. The next layer receives that vector as its input.
+The diagram is fully connected because each output uses all three inputs. The three orange circles do not vote on one decision. They form a three-value output, which becomes the input to the next layer.
+
+::: {.concept-box .concept-core #concept-neural-layer data-term="Neural-network layer" data-domain="Foundations" data-symbols="W; b"}
+**Neural-network layer.** Several neuron calculations applied to the same input. Each one has its own learned weights and bias; together their outputs form a new vector for the next calculation.
+:::
 
 ### A layer changes the representation
 
-The original coordinates have substantive meanings such as distance, prior participation, and access to information. A hidden layer produces new coordinates defined by its learned parameters. One output may respond strongly to short distance and previous participation; another may respond to a different combination. These outputs are often called a **representation** because they describe the same observation in a new coordinate system.
+The original coordinates describe information supplied to the model. A hidden layer produces new coordinates defined by its learned settings. One output may be high for one combination of the inputs and another for a different combination. These outputs are called a **representation** because they describe the same household in a form that later layers can use.
 
 The individual coordinates should not automatically be assigned human-readable concepts. A layer is trained as part of a larger objective, and useful information can be distributed across many units. The relevant claim is computational: the layer has transformed one vector into another.
 
@@ -124,24 +96,15 @@ The phrase **input layer** usually refers to the values supplied to the network 
 
 These names describe position in the network. The matrix operation can be the same in a hidden layer and an output layer even though their outputs have different interpretations.
 
-The layer has increased the number of values carried forward, but has not changed the basic arithmetic. The next level identifies how a matrix stores all of the individual neuron weights and how its shape determines the input and output interfaces.
+The layer has increased the number of values carried forward without changing the basic arithmetic. The next level works through three such calculations, one output at a time, before introducing the matrix that stores them together.
 
 ## Level 2 - Mechanics
 
-The layer diagram can now be read as a sequence of concrete operations. The important change from Chapter 5 is that the calculation is repeated for several units and organised as one matrix operation.
+The layer diagram can now be read as three concrete calculations. Each one combines the same input values, but it has a different set of weights and a different bias.
 
-### Six operations in a dense layer
+### Three calculations, one input
 
-For one observation, a dense layer:
-
-1. receives an input vector;
-2. gives each output unit its own row of weights;
-3. multiplies every input by the corresponding weight in that row;
-4. sums each row's contributions;
-5. adds one bias per output unit; and
-6. applies an activation to each pre-activation when the architecture specifies one.
-
-For the running example, the three unit calculations are:
+For the running example, the three outputs are calculated separately:
 
 | Unit | Weighted sum | Bias | Pre-activation | ReLU output |
 |---:|---|---:|---:|---:|
@@ -204,42 +167,6 @@ The orientation of the weight matrix is a common source of confusion. In this bo
 - the number of columns is the input width.
 
 A $3\times3$ matrix is ambiguous by inspection because the input and output widths happen to match. For a layer with three inputs and five outputs, the weight matrix has five rows and three columns. Writing the dimensions before calculating prevents many shape errors.
-
-### One layer processes a batch
-
-Training normally processes several observations together. If a batch contains four households and each has three features, the input has shape $(4,3)$. The same weight matrix is applied to every row, producing four output vectors.
-
-```{python}
-#| label: fig-batch-layer
-#| fig-cap: "A batch changes the number of observations, while the layer determines the output width."
-#| fig-alt: "A horizontal shape diagram shows an input batch of B by 3 multiplied by a transposed 3 by 3 weight matrix, followed by a bias, producing an output batch of B by 3."
-fig, ax = plt.subplots(figsize=(10, 2.6))
-blocks = [
-    (0.11, r"Input $X$" + "\n" + r"$B \times 3$", blue),
-    (0.36, r"Multiply by $W^\top$" + "\n" + r"$3 \times 3$", teal),
-    (0.61, r"Add bias $b$" + "\n" + r"$3$", orange),
-    (0.86, r"Output $Z$" + "\n" + r"$B \times 3$", blue),
-]
-for xpos, label, colour in blocks:
-    ax.text(xpos, 0.56, label, ha="center", va="center", color="white", weight="bold",
-            bbox={"boxstyle": "round,pad=0.55", "facecolor": colour})
-for left, right in zip(blocks[:-1], blocks[1:]):
-    ax.add_patch(FancyArrowPatch(
-        (left[0] + 0.095, 0.56),
-        (right[0] - 0.095, 0.56),
-        arrowstyle="->",
-        mutation_scale=14,
-        color="#666666",
-    ))
-ax.text(0.5, 0.12, "The batch dimension B is preserved", ha="center", color="#4a4a4a")
-ax.set_xlim(0, 1)
-ax.set_ylim(0, 1)
-ax.axis("off")
-plt.tight_layout()
-plt.show()
-```
-
-The layer changes the last dimension from input width to output width. It does not mix observations across the batch. Every row uses the same $W$ and $b$. This parameter sharing is what allows one fitted layer to process new observations after training.
 
 ### Layers compose by matching dimensions
 
@@ -315,6 +242,40 @@ The bias vector is **broadcast** across the batch: the same $b_j$ is added to ou
 | $W$ | $d_{\mathrm{out}}\times d_{\mathrm{in}}$ | one row per output unit |
 | $b$ | $d_{\mathrm{out}}$ | one bias per output unit |
 | $Z$ | $B\times d_{\mathrm{out}}$ | batch of pre-activation vectors |
+
+The shape calculation makes two things visible. The layer changes the final dimension from input width to output width, and it does not mix observations within the batch. Every row uses the same $W$ and $b$.
+
+```{python}
+#| label: fig-batch-layer
+#| fig-cap: "A batch changes the number of observations, while the layer determines the output width."
+#| fig-alt: "A horizontal shape diagram shows an input batch of B by 3 multiplied by a transposed 3 by 3 weight matrix, followed by a bias, producing an output batch of B by 3."
+fig, ax = plt.subplots(figsize=(10, 2.6))
+blocks = [
+    (0.11, r"Input $X$" + "\n" + r"$B \times 3$", blue),
+    (0.36, r"Multiply by $W^\top$" + "\n" + r"$3 \times 3$", teal),
+    (0.61, r"Add bias $b$" + "\n" + r"$3$", orange),
+    (0.86, r"Output $Z$" + "\n" + r"$B \times 3$", blue),
+]
+for xpos, label, colour in blocks:
+    ax.text(xpos, 0.56, label, ha="center", va="center", color="white", weight="bold",
+            bbox={"boxstyle": "round,pad=0.55", "facecolor": colour})
+for left, right in zip(blocks[:-1], blocks[1:]):
+    ax.add_patch(FancyArrowPatch(
+        (left[0] + 0.095, 0.56),
+        (right[0] - 0.095, 0.56),
+        arrowstyle="->",
+        mutation_scale=14,
+        color="#666666",
+    ))
+ax.text(0.5, 0.12, "The batch dimension B is preserved", ha="center", color="#4a4a4a")
+ax.set_xlim(0, 1)
+ax.set_ylim(0, 1)
+ax.axis("off")
+plt.tight_layout()
+plt.show()
+```
+
+The same parameter values are reused for every row. This is why a trained layer can process a new household without acquiring a new set of weights.
 
 ### NumPy calculation
 

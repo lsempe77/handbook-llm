@@ -5,27 +5,23 @@ subtitle: "How a network computes the gradients it needs to learn"
 
 ## The problem
 
-Gradient descent can update a parameter once it has that parameter's gradient. A neural network may have millions of parameters, each affecting the loss through a long sequence of operations. Calculating a separate derivative from scratch for every parameter would make training impractical.
+Chapter 3 showed how a gradient can tell us which way to change one setting in a model. A neural network has many settings, and each one affects the final loss through a chain of calculations. Repeating the entire calculation separately for every setting would be far too slow.
 
-Backpropagation reuses the computations that produced the loss. It first records a forward calculation, then moves backwards through that calculation, passing a local sensitivity from each operation to the values that produced it.
+Backpropagation avoids that repetition. It keeps track of the calculations used to produce the loss, then works backwards through them. At each step, it asks one narrow question: if this value had changed a little, how much would the final loss have changed?
 
-### The running example
+### A small calculation to follow
 
-We will use a three-operation computation:
+We will use three simple operations:
 
 $$
 a=3x,\qquad b=a+4,\qquad L=b^2.
 $$
 
-It is small enough to calculate by hand, but it contains the same structure as a larger network: operations are composed in a forward direction, and the derivative of the final loss is propagated backwards through them.
-
-::: {.concept-box .concept-core #concept-backpropagation data-term="Backpropagation" data-domain="Foundations"}
-**Backpropagation.** A method for calculating derivatives of a model's scalar loss with respect to its parameters by applying the chain rule backwards through the recorded forward computation. It calculates gradients; an optimiser uses those gradients to choose parameter updates.
-:::
+Start with an input $x$. Multiply it by three, add four, then square the result to obtain a loss. A neural network contains more operations, but it is built from the same idea: a calculation moves forward from inputs to a loss, and information needed for updating the model moves back through the same chain.
 
 ## Level 1 - Intuition
 
-The figure separates two jobs that are often collapsed into “training”. The upper row computes a prediction and then a loss. The lower row answers a different question: how would a small change in an earlier value alter that final loss? Follow the upper row first; the backward arrows will then have something concrete to refer to.
+Follow the top row first. It shows the ordinary calculation from an input to a loss. Only once that calculation is complete does the bottom row begin. It carries back the information needed to answer how the final loss would change if an earlier value were slightly different.
 
 ```{python}
 #| label: fig-forward-backward-intuition
@@ -37,43 +33,39 @@ plt.style.use("seaborn-v0_8-whitegrid")
 blue, teal, orange = "#24527a", "#3a9188", "#d97745"
 
 fig, ax = plt.subplots(figsize=(8.5, 2.7))
-positions = [0.15, 0.38, 0.61, 0.84]
-labels = ["input", "operation 1", "operation 2", "loss"]
+positions = [0.12, 0.36, 0.60, 0.84]
+labels = ["input x", "multiply\nby 3", "add 4", "loss"]
 for xpos, label in zip(positions, labels):
     ax.text(xpos, 0.68, label, ha="center", va="center", color="white", weight="bold",
             bbox={"boxstyle": "round,pad=0.45", "facecolor": blue if label != "loss" else orange})
-    ax.text(xpos, 0.28, "gradient", ha="center", va="center", color="white", fontsize=9,
+    ax.text(xpos, 0.28, "effect on\nloss", ha="center", va="center", color="white", fontsize=9,
             bbox={"boxstyle": "round,pad=0.35", "facecolor": teal})
 for left, right in zip(positions[:-1], positions[1:]):
     ax.annotate("", xy=(right - 0.08, 0.68), xytext=(left + 0.08, 0.68), arrowprops={"arrowstyle": "->", "color": blue, "lw": 1.8})
 for left, right in zip(positions[1:], positions[:-1]):
     ax.annotate("", xy=(right + 0.08, 0.28), xytext=(left - 0.08, 0.28), arrowprops={"arrowstyle": "->", "color": orange, "lw": 1.8})
-ax.text(0.5, 0.88, "forward computation", ha="center", color=blue)
-ax.text(0.5, 0.06, "backward gradient signal", ha="center", color=orange)
+ax.text(0.5, 0.88, "first: calculate the loss", ha="center", color=blue)
+ax.text(0.5, 0.06, "then: trace how earlier values affect that loss", ha="center", color=orange)
 ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.axis("off")
 plt.tight_layout()
 plt.show()
 ```
 
-The upper row shows the computation used to produce the loss. Each operation receives a value from the left and sends a new value to the right. The lower row shows a different quantity moving in the opposite direction: the sensitivity of the final loss to each intermediate value. The backward arrows do not undo the forward computation; they calculate how a small change at each point would affect the final loss.
+The top row carries values forward. Each operation takes the value on its left and produces a new one on its right. The bottom row carries a different kind of information backwards: how a small change at this point would affect the loss at the end. It does not reverse the original calculation or recover the input; it answers a new question about the effect of a small change.
 
-### Forward computation and backward attribution
+### Reusing one calculation
 
-The forward pass computes an output. In a neural network, input values pass through layers, produce a prediction, and are compared with the target to produce a loss.
+For the three-step example, the forward calculation gives us the values reached after multiplying, adding, and squaring. The backward calculation reuses those values to work out the effect of changing $x$, then the effect of changing the earlier intermediate values. In a network, the same idea lets one forward calculation supply gradients for many parameters.
 
-The backward pass starts with that loss and calculates its local sensitivity to each preceding value and parameter. A large gradient means that a small parameter change would produce a large local change in the loss; a small gradient means that the loss is locally less sensitive. The resulting gradients provide the information an optimiser uses to update the parameters.
+::: {.concept-box .concept-core #concept-backpropagation data-term="Backpropagation" data-domain="Foundations"}
+**Backpropagation.** A way to calculate the gradient of a loss for every adjustable part of a model without repeating the whole calculation for each part. It first runs the model forward to obtain a loss, then works backwards through the recorded operations.
+:::
 
-This is an attribution of mathematical sensitivity, not a causal explanation of why an individual person received a prediction. Backpropagation describes how the loss changes when parameters change within the specified model.
-
-### A production-line analogy
-
-Suppose a production process applies three transformations to an input. The final quality score is poor. To improve the process, we need to trace the score backwards through the transformations and determine which adjustable settings affected it.
-
-The analogy is useful only up to a point. A neural network does not assign moral or substantive responsibility to a neuron. It computes derivatives using local rules. The value of backpropagation lies in the efficiency of this calculation.
-
-The forward pass has supplied the values at each operation. The remaining task is to reuse those values to calculate a gradient for every earlier adjustable quantity, without repeating the entire computation once per parameter.
+Level 2 follows this calculation with numbers. The aim is to see where the backward quantities come from before writing the chain rule in full.
 
 ## Level 2 - Mechanics
+
+Set $x=2$ in the three-step calculation. The forward pass gives one concrete value at each box. The backward pass then starts at the loss and combines the effect of each operation, one link at a time. The diagram shows those links before the arithmetic fills them in.
 
 ```{python}
 #| label: fig-chain-rule-mechanics
@@ -94,7 +86,7 @@ plt.tight_layout()
 plt.show()
 ```
 
-The boxes show the values computed during the forward pass. The labels beneath the arrows are the local derivatives associated with each operation. Backpropagation combines these local pieces rather than deriving the complete function from scratch for every parameter. In the running example, multiplying $3$, $1$, and $20$ gives the sensitivity of the loss to $x$.
+The boxes show the operations in the forward calculation. The numbers beneath the arrows describe the effect of a small change as it passes through that operation. Backpropagation combines these local effects instead of deriving the complete expression again for every parameter. In this example, the effects $3$, $1$, and $20$ combine to tell us how changing $x$ would change the loss.
 
 ### The forward pass
 

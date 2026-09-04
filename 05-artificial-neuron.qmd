@@ -5,37 +5,33 @@ subtitle: "From weighted inputs to neural-network layers"
 
 ## The problem
 
-Chapter 4 described a network as a chain of small computations through which values move forward and gradients move backward. We now need one concrete computation to place in that chain. An artificial neuron takes several input values, gives each a learned weight, adds a learned baseline, and returns one score.
+To estimate whether a household is likely to take up the outreach programme, a model may use several pieces of information at once. Travel time, the number of previous contacts, and whether information was received through a local group might each be useful, but they need not carry the same weight in the estimate. We need a small calculation that can combine them.
 
-The name is historical, not biological. A modern artificial neuron is a compact mathematical operation. Its importance is that the same operation can be repeated, trained jointly, and arranged into the layers examined in the next chapter.
+An artificial neuron is that calculation. It multiplies each input by a number that the model learns, adds the results, and adjusts the total by one further number. The result is passed to the next part of the model. Chapter 4 showed how the learning algorithm can work backwards through a chain of calculations; this chapter opens one link in that chain.
 
 ### The running calculation
 
-We will use three standardised input features from the programme-uptake example introduced in [Chapter 1](01-what-is-machine-learning.qmd):
+Suppose that the three pieces of information for one household have already been prepared as numbers:
 
 $$
 x=(x_1,x_2,x_3)=(2,4,1).
 $$
 
-The values are deliberately abstract because they have been standardised. They might represent transformed measures of distance, previous participation, and access to information. The neuron uses weights
+These are not raw measures such as minutes or visits. They are standardised inputs, so that the calculation can handle features recorded on different scales. To begin, give them three weights:
 
 $$
 w=(0.5,-1,2)
 $$
 
-and bias $b=3$. The example explains the computation; the weights should not be interpreted as causal effects.
-
-::: {.concept-box .concept-core #concept-artificial-neuron data-term="Artificial neuron" data-domain="Foundations" data-symbols="x; w; b"}
-**Artificial neuron.** A unit that forms a weighted sum of input values, adds a bias, and may pass the result through an activation function. The weighted sum is an affine calculation; non-linearity enters only when an activation is applied. A neuron's weights are parameters, but not every model parameter is a connection weight.
-:::
+and one additional number, called the bias, $b=3$. For the moment, treat these as the settings of a calculation. Training is the process that chooses settings that work well across many earlier households.
 
 ## Level 1 - Intuition
 
-The diagram should be read as an arithmetic recipe. Each input is multiplied by its own weight; those signed contributions are added with the bias; the resulting score is passed on. The arrows are not claims that one observed feature causes an outcome.
+The diagram is an arithmetic recipe. Each incoming value is multiplied by the number written beside its arrow. The three products are added, the bias is included, and the total becomes the neuron's output.
 
 ### Inputs do not contribute equally
 
-A prediction model may use several features, but there is no reason to assume that each feature contributes equally or in the same direction. A weight records how strongly one input contributes to the neuron's current score. A positive weight raises the score when the input increases; a negative weight lowers it. A weight near zero makes the input contribute little to this neuron.
+The weights allow the calculation to treat the inputs differently. A positive weight means that a larger input raises this neuron's score; a negative weight means that it lowers the score. A weight close to zero leaves little trace in this particular calculation. The signs and sizes are not chosen by hand in a trained network: they are adjusted from earlier examples.
 
 ```{python}
 #| label: fig-neuron-intuition
@@ -73,17 +69,21 @@ plt.tight_layout()
 plt.show()
 ```
 
-The arrows encode the weights. Their labels give the sign and magnitude of each contribution. The neuron does not inspect the substantive meaning of the features; it multiplies values, adds the results, and applies a fixed activation rule. Any substantive interpretation must come from the problem definition, data, and evaluation outside this operation.
+The arrows encode the weights. The labels show why the three inputs do not have the same effect on the total: the second arrow has a negative weight, while the third has the largest positive weight.
+
+::: {.concept-box .concept-core #concept-artificial-neuron data-term="Artificial neuron" data-domain="Foundations" data-symbols="x; w; b"}
+**Artificial neuron.** A small calculation that gives each input a learned weight, adds the weighted inputs and a bias, and produces one value. An activation function may then transform that value before it is passed forward.
+:::
 
 ### The bias sets a baseline
 
-The bias contributes even when every input equals zero. It shifts the neuron's score and therefore changes where an activation function switches behaviour. In a binary decision, this resembles changing a threshold while holding the feature weights fixed. The analogy is approximate because many neural-network activations do not produce a hard decision.
+The bias is the part of the calculation that remains when all three inputs are zero. It moves the whole score up or down before any activation function is applied. Without it, the calculation would be forced through a particular starting point; with it, the model can learn where the score should sit before the inputs make their contributions.
 
-The bias should not be interpreted in isolation. Its numerical meaning depends on the feature representation. If inputs are centred and scaled, zero may represent an average transformed case; if inputs are raw counts, zero may be an observed boundary or an implausible combination. The computation always includes the bias, but substantive interpretation requires knowing what the input coordinates mean.
+This is easiest to see after the arithmetic has been laid out. The three weighted contributions in the running example total $-1$. Adding the bias moves the total to $2$. The bias is therefore not an optional decoration: it is one of the quantities learned during training.
 
-### One neuron does not contain an explanation
+### Following the contributions
 
-A weight tells us how one input enters one fitted computation. It does not establish that changing the input would change the outcome, and its meaning can depend on feature scaling and the other layers of the network. In a deep network, useful representations are distributed across many units. Inspecting one neuron rarely provides a complete account of the model's prediction.
+The arithmetic also explains why the largest input does not necessarily have the largest effect. Each input must be considered together with its weight.
 
 ```{python}
 #| label: fig-weighted-contributions
@@ -100,23 +100,15 @@ ax.set(ylabel="Contribution to pre-activation",title="Signed contributions form 
 plt.tight_layout(); plt.show()
 ```
 
-The second input has the largest magnitude and a negative weight, so it lowers the score by four. The diagram makes a limited computational claim: these values combine to form $z$. It does not establish that the second underlying feature is harmful, important in every context, or causally related to the target.
+The second input is numerically largest, but its negative weight makes its contribution $-4$. The first input contributes $1$, the third contributes $2$, and the bias contributes $3$. Together they form the score $2$.
 
-One neuron gives one score. To reproduce that score, we need to distinguish the inputs, the learned weights, the bias, and the pre-activation before an activation function changes its shape. The next level performs that calculation in order.
+One neuron produces one number in this way. The next level follows the calculation line by line, then shows how the same rule is applied to many households at once.
 
 ## Level 2 - Mechanics
 
-### The five operations
+### Working through one neuron
 
-For one observation, a neuron performs five steps:
-
-1. receive the input values;
-2. multiply each input by its weight;
-3. add the weighted contributions;
-4. add the bias to obtain the pre-activation $z$;
-5. apply an activation function $g$ to obtain $a=g(z)$.
-
-The running example makes each step visible:
+Take the three inputs from the running example. First multiply each one by its corresponding weight. The table keeps the products separate before they are added:
 
 | Input | Value $x_j$ | Weight $w_j$ | Contribution $w_jx_j$ |
 |---|---:|---:|---:|
@@ -124,30 +116,13 @@ The running example makes each step visible:
 | $x_2$ | 4 | -1 | -4 |
 | $x_3$ | 1 | 2 | 2 |
 
-The weighted contributions sum to $1-4+2=-1$. Adding the bias gives:
+They sum to $1-4+2=-1$. Adding the bias gives:
 
 $$
 z=-1+3=2.
 $$
 
-The number 2 is the **pre-activation**. It is the neuron's linear output before the activation function is applied.
-
-### One rule can be applied to a batch without changing its meaning
-
-The running calculation uses one vector and one scalar output. For a batch, the same weight vector and bias are applied to each row of inputs. A batch of shape $B\times p$ therefore produces one pre-activation and one activation for each of its $B$ observations. The parameter shapes do not grow with batch size; only the number of computations and stored activations does.
-
-```{python}
-batch=np.array([[2.,4.,1.],[0.,1.,3.],[-1.,2.,2.]])
-weights=np.array([.5,-1.,2.]); bias=3.
-batch_z=batch@weights+bias
-batch_a=np.maximum(0,batch_z)
-print("input batch shape:",batch.shape)
-print("shared weight and bias shapes:",weights.shape,np.asarray(bias).shape)
-print("pre-activations:",batch_z)
-print("ReLU activations:",batch_a)
-```
-
-The three outputs come from three observations, not three different neurons. Chapter 6 generalises this step by placing several weight vectors in one matrix so that a layer can produce several outputs per observation.
+The number 2 is called the **pre-activation**, written $z$. It is the score before the neuron applies an activation function. If the activation is written $g$, the value passed onward is $a=g(z)$.
 
 ### How the bias changes a boundary
 
@@ -191,13 +166,13 @@ $$
 g(z)=\max(0,z),
 $$
 
-the running example produces $a=2$. A pre-activation of $-2$ would produce $a=0$. The activation therefore changes the information passed to the next layer and changes how gradients flow backwards.
+the running example produces $a=2$. A pre-activation of $-2$ would produce $a=0$. Different activation functions shape this hand-off in different ways; Chapter 7 examines that choice.
 
 ### A neuron during training
 
 The forward pass calculates $z$ and $a$. The loss compares the eventual network output with the target. Backpropagation calculates gradients for the weight and bias, and the optimiser updates them. The inputs are data; the weights and bias are parameters. The activation function usually has a fixed form, although some architectures use activations with learned parameters.
 
-The calculation makes the unit inspectable, but the notation is still useful because the same operation must be applied to many observations and later to many output units. The mathematics and code below express that repeated computation compactly.
+The calculation is now complete for one household. The mathematics and code below express the same calculation compactly and then apply it to several households without changing the learned settings.
 
 ## Level 3 - Mathematics & Code
 
@@ -265,6 +240,23 @@ The result equals the manual pre-activation because both calculations use the sa
 
 The stored orientation is worth checking because it prevents a common shape error. A one-neuron layer stores one row of weights, so `layer.weight` has shape $(1,3)$. A batch with shape $(B,3)$ returns an affine output with shape $(B,1)$. The extra final axis represents one output feature per observation; it should not be removed accidentally when later code expects a feature dimension.
 
+### Applying one neuron to a batch
+
+The running calculation used one input vector and produced one output. In code, the same weight vector and bias are applied to every row in a batch. A batch of shape $B\times p$ therefore produces one pre-activation and one activation for each of its $B$ observations; the number of learned parameters does not grow with the batch.
+
+```{python}
+batch=np.array([[2.,4.,1.],[0.,1.,3.],[-1.,2.,2.]])
+weights=np.array([.5,-1.,2.]); bias=3.
+batch_z=batch@weights+bias
+batch_a=np.maximum(0,batch_z)
+print("input batch shape:",batch.shape)
+print("shared weight and bias shapes:",weights.shape,np.asarray(bias).shape)
+print("pre-activations:",batch_z)
+print("ReLU activations:",batch_a)
+```
+
+The three outputs belong to three observations, not to three different neurons. Chapter 6 adds multiple learned weight vectors to produce several outputs for each observation.
+
 ### Activation functions
 
 ```{python}
@@ -318,30 +310,7 @@ The argument concerns the function represented by the composition, not the usefu
 
 ## Level 4 - Research & Systems
 
-The single-neuron notation is useful for derivation, but modern systems execute layers as batched matrix operations. This level explains the change in scale and identifies which properties of the small example remain relevant.
-
-### From one neuron to a layer
-
-For a batch $X\in\mathbb{R}^{B\times d_{in}}$ and a layer with $d_{out}$ output units:
-
-$$
-Z=XW^\top+b,
-$$
-
-where $W\in\mathbb{R}^{d_{out}\times d_{in}}$, $b\in\mathbb{R}^{d_{out}}$, and $Z\in\mathbb{R}^{B\times d_{out}}$. One matrix multiplication computes every weighted sum for every observation in the batch.
-
-```{python}
-batch_size, input_width, output_width = 128, 512, 2048
-parameter_count = input_width * output_width + output_width
-print(f"input shape:  ({batch_size}, {input_width})")
-print(f"weight shape: ({output_width}, {input_width})")
-print(f"output shape: ({batch_size}, {output_width})")
-print(f"parameters:   {parameter_count:,}")
-```
-
-The layer has more than one million parameters, but the computation is still the same weighted-sum operation. Hardware libraries process the matrix multiplication as a large kernel instead of running more than two thousand separate Python neuron objects.
-
-One distinction remains important when moving from the scalar notation. For a layer, each output unit has its own row of $W$ and its own bias entry. Outputs may share the same input features but they do not share their learned coefficients. The term *neuron* is therefore a useful local description of one row-wise calculation, while a layer is the object that a model implementation normally stores and updates.
+Chapter 6 develops the move from one neuron to a layer. Here the question is different: what changes when the same weighted-sum calculation is executed at the scale of contemporary models? The relevant constraints are matrix shapes, stored activations, memory traffic, numerical precision, and the need to initialise many units differently.
 
 ### Feed-forward blocks in Transformers
 

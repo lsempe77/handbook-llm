@@ -5,32 +5,31 @@ subtitle: "From examples to predictions"
 
 ## The problem
 
-An organisation wants to decide whom to contact about a programme. It has records from earlier outreach and wants an estimate, before making a new contact, of whether each household is likely to take up the offer. The records contain information that is available at that point:
+Let’s imagine that you run a small outreach programme. Each week, a list of households arrives, but your team has time to contact only a few. You need some basis for choosing where to start.
 
-| Household | Age of respondent | Distance to service point | Earlier programme visits | Took up programme? |
+The programme has records from earlier rounds of outreach. For each household, the records show what was known before contact—age, travel time to the service point, and earlier programme visits—and what happened afterwards. A small extract might look like this:
+
+| Household | Age of respondent | Travel time to service point | Earlier programme visits | Took up programme? |
 |---|---:|---:|---:|---:|
-| A | 24 | 2.1 km | 0 | 1 |
-| B | 58 | 18.4 km | 1 | 0 |
-| C | 37 | 5.8 km | 1 | 1 |
+| A | 24 | 6 minutes | 0 | Yes |
+| B | 58 | 42 minutes | 1 | No |
+| C | 37 | 12 minutes | 1 | Yes |
+| D (new) | 41 | 15 minutes | 2 | ? |
 
-The first three columns are **features**: inputs used to make a prediction. The final column is a **label**: the recorded outcome. The immediate task is modest. Given the first three columns for a new household, produce a useful estimate of the fourth.
+Households A, B, and C are earlier contacts: their outcomes are already in the records. Household D is different. You know the three facts in its row, but the last cell is blank because contact has not yet happened. The immediate question is whether the earlier rows can help you form a sensible estimate for D.
 
-The timing is part of the task. An application outcome may help predict a later administrative decision, but it cannot be used to choose whom to contact before an application exists. “Take-up” also needs a stated meaning: attending once, completing the programme, or remaining enrolled are different labels. These choices are made before an algorithm is chosen.
-
-The model will describe an association in records like these. It will not establish that changing distance, age, or previous participation would cause uptake to change. Prediction and causal explanation use some of the same variables, but answer different questions.
-
-::: {.concept-box .concept-core #concept-machine-learning data-term="Machine learning" data-domain="Foundations"}
-**Machine learning.** A procedure that fits a parameterised mapping from inputs to outputs using examples and a stated objective. **Training** changes the fitted parameters; **inference** applies the resulting model to new inputs. A prediction can be useful without establishing that its inputs cause the outcome.
-:::
+This is the kind of problem machine learning addresses. It uses earlier cases, where both the starting information and the later outcome are known, to build a rule for new cases, where only the starting information is available.
 
 ## Level 1 - Intuition
 
-The organisation could write a rule by hand: contact households within five kilometres, for example. A machine-learning model starts differently. It looks for a pattern in earlier records and applies that estimated pattern to a household whose outcome is not yet known. The first figure uses two of the recorded variables. Before reading the code, notice the practical question: households nearer the service point and with more earlier visits tend to lie in the uptake group, but the pattern is not exact.
+You could choose a rule yourself: perhaps contact anyone who lives within ten minutes of the service point. That would be a perfectly ordinary way to proceed, but it uses only a judgement made in advance. Machine learning takes another route. It looks at the earlier households and asks which combinations of their recorded characteristics have tended to go with uptake.
+
+The first figure makes this visible using only two characteristics: travel time and earlier visits. Orange and blue points are households from the earlier records. The teal star is household D. It appears at 15 minutes and two visits because those are the facts already known about D. Its colour is missing because its outcome is precisely what we are trying to estimate.
 
 ```{python}
 #| label: fig-intuition-pattern
-#| fig-cap: "Illustrative outreach records: travel time and earlier visits provide an imperfect pattern for predicting uptake."
-#| fig-alt: "Recorded households plotted by travel time to the service point and earlier programme visits. Orange points indicate uptake, blue points indicate no uptake, and a teal star marks a household whose uptake is to be predicted."
+#| fig-cap: "Earlier outreach records provide an imperfect pattern for estimating whether the new household, shown by the teal star, will take up the programme."
+#| fig-alt: "Households are plotted by travel time and earlier programme visits. Orange points show known uptake and blue points show known non-uptake. The teal star represents a new household with a travel time of fifteen minutes and two earlier visits, whose uptake outcome is not yet known."
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -45,7 +44,9 @@ new_case = np.array([15, 2])
 fig, ax = plt.subplots(figsize=(7.5, 4.2))
 ax.scatter(no_uptake[:, 0], no_uptake[:, 1], color=blue, s=70, alpha=0.75, label="recorded: no uptake")
 ax.scatter(uptake[:, 0], uptake[:, 1], color=orange, s=70, alpha=0.75, label="recorded: uptake")
-ax.scatter(*new_case, color=teal, edgecolor="white", linewidth=1.5, s=180, marker="*", label="household to predict", zorder=3)
+ax.scatter(*new_case, color=teal, edgecolor="white", linewidth=1.5, s=180, marker="*", label="new household: uptake unknown", zorder=3)
+ax.annotate("Known: 15 minutes, 2 visits\nUnknown: uptake", xy=new_case, xytext=(23, 4.65),
+            arrowprops={"arrowstyle": "->", "color": teal}, color="#1f4f4b", fontsize=9)
 ax.set(xlabel="Travel time to service point (minutes)", ylabel="Earlier programme visits", title="Earlier records provide an imperfect pattern")
 ax.set(xlim=(0, 46), ylim=(-0.4, 5.6), yticks=range(0, 6))
 ax.legend(frameon=False)
@@ -53,15 +54,17 @@ plt.tight_layout()
 plt.show()
 ```
 
-The model does not memorise a label for the new case. It uses the relationship estimated from the examples to assign a prediction.
+The star is not another example from which the model can learn; it is the household for which the programme needs an answer. It shares some characteristics with households that took up the programme and some with households that did not. A machine-learning model turns that incomplete resemblance into an estimate, perhaps saying that D has a 60 per cent chance of taking up the offer. The programme can then decide whether that estimate is useful enough to guide outreach.
 
-The figure shows the basic inferential move made by a prediction model. The coloured points are records for which uptake is known. The star is a household whose outcome is not yet known. Its travel time and earlier visits place it near several uptake records, but not on a clean boundary: one household with no uptake is also nearby. A model turns this imperfect pattern into an output, such as a probability of uptake. It does not show that reducing travel time or creating earlier visits would cause uptake.
+Nothing in the chart provides a certain answer. The earlier records may be small, incomplete, or unrepresentative of the households now on the list. But they give us more to work with than a rule invented without looking at any past cases.
 
-The model can be wrong in at least two ways. It can miss a pattern that is present in the data, or it can treat a pattern in the development data as if it would continue in new data when it will not. The first problem concerns fitting; the second concerns generalisation. Both are part of the learning problem.
+::: {.concept-box .concept-core #concept-machine-learning data-term="Machine learning" data-domain="Foundations"}
+**Machine learning.** A way of using earlier cases to construct a rule for new ones. During **training**, the rule is adjusted using cases whose outcomes are known. During **inference**, the completed rule is applied to a new case whose outcome is still unknown.
+:::
 
 ### Rules written by people
 
-Traditional software is usually specified as a sequence of instructions. For example:
+Ordinary software follows instructions written in advance. An outreach team could give the computer a rule such as:
 
 ```text
 if distance < 5 km and prior participation = 1:
@@ -70,13 +73,15 @@ else:
     predict low uptake
 ```
 
-The analyst writes the rule, and the computer applies it. If the rule is wrong, the analyst must change it.
+The computer applies this rule consistently, but the rule comes entirely from the team. If it gives poor decisions, someone has to decide which condition to change and how.
 
 ### Patterns estimated from examples
 
-In machine learning, we provide examples and ask the system to estimate a useful mapping. The model might represent the mapping as a weighted combination of features, a tree of decisions, or a neural network. The computer does not receive a complete list of rules. It receives an objective—make predictions that agree with observed outcomes—and adjusts internal parameters to improve that objective.
+Machine learning asks the computer to use the earlier cases to construct the rule. The resulting rule might be a weighted formula, a tree of decisions, or a neural network. The form will matter later; at this stage, the point is simply that the conditions are fitted from examples instead of being specified one by one beforehand.
 
-The distinction is not absolute. People still choose the data, define the target, choose the model family, and decide how predictions will be used. Machine learning automates part of the pattern-finding process; it does not remove human judgement from the system.
+The people running the programme still decide what counts as an earlier case, what outcome matters, which information can be used, and what to do with a prediction. Machine learning helps with one part of the work: finding a rule that uses the available records.
+
+The next figure compares the two approaches. In the left panel, the rule has been written before looking at the points. In the right panel, the boundary has been estimated from them. The boundary is a visual way to show which combinations of age and travel time lead the rule towards one prediction or the other.
 
 ```{python}
 #| label: fig-rule-vs-learned
@@ -165,15 +170,15 @@ plt.tight_layout(rect=[0, 0.08, 1, 1])
 plt.show()
 ```
 
-Both panels use the same illustrative observations. In the left panel, the analyst decides in advance that distance alone determines the prediction. The boundary is therefore horizontal: age cannot alter the decision. In the right panel, a logistic model estimates how both age and distance separate the observed classes. Its angled boundary reflects the fitted association in these examples. Neither boundary is a causal claim, and the fitted boundary is not automatically preferable; it must still be evaluated on cases that were not used to estimate it.
+Both panels use the same illustrative observations. The left-hand rule ignores age, so two people at the same distance receive the same result regardless of age. The right-hand rule changes with both age and distance because it has been estimated from the points. Estimating a rule from examples does not guarantee that it will be useful, but it gives the programme a way to test whether the past records improve its decisions.
 
-### Prediction is not understanding
+### What the model needs
 
-A model can produce useful predictions without possessing a human-like explanation of the world. It may exploit regularities that are stable enough in the data but accidental, unfair, or fragile outside that setting. This is why evaluation must ask more than “does the model fit the examples?” It must ask whether the predictions remain useful for the intended population and decision.
-
-The first explanation is sufficient to state the central idea: examples supply a pattern, and a model uses that pattern to make a prediction for a new case. The next question is what, exactly, the model receives and changes while it is being fitted.
+The example has four ingredients: earlier households, information recorded before contact, an outcome observed afterwards, and a new household for which the outcome is not yet known. We can now give these ingredients precise names and see how a computer stores them.
 
 ## Level 2 - Mechanics
+
+Go back to household D. The programme has three pieces of information about D: age, travel time, and earlier visits. It passes those pieces of information to the fitted rule. The rule returns an estimate, such as a probability of uptake. The diagram separates these three parts so that we can see what changes during training and what is available only after the outcome has been observed.
 
 ```{python}
 #| label: fig-mechanics-pipeline
@@ -193,36 +198,36 @@ plt.tight_layout()
 plt.show()
 ```
 
-The diagram separates three operations that are often compressed into the word “model”. The features are the information available at prediction time. The fitted model is the function whose parameters were estimated using training data. The prediction is the output for this particular case. The arrows indicate computation, not causation: they show how information is transformed into an output.
+The input box contains the information available when a prediction is needed. The middle box is the rule constructed from earlier cases. The final box is its answer for one household. In ordinary language, those are the facts we know, the rule we have learned, and the estimate we use.
 
 ### The basic objects
 
-An ML dataset can be represented as a table with $n$ observations and $p$ features. Let:
+The same prediction task can now be written compactly. A dataset has $n$ cases, each described by $p$ inputs. For case $i$, let:
 
 - $x_i$ be the feature vector for observation $i$;
-- $y_i$ be its observed label or target;
+- $y_i$ be its observed outcome (the target or label);
 - $f_\theta$ be a model with parameters $\theta$;
 - $\hat{y}_i=f_\theta(x_i)$ be the model’s prediction.
 
-The model is trained by comparing predictions with labels and changing $\theta$ so that the discrepancy becomes smaller. A **parameter** is learned from the training data. A **hyperparameter** is chosen by the analyst or training procedure, such as a learning rate, tree depth, or regularisation strength.
+During training, the model compares its predictions with the observed outcomes and changes $\theta$ to reduce the discrepancy. A **parameter** is a value learned in this fitting process. A **hyperparameter** is set outside it, for example the learning rate, tree depth, or regularisation strength.
 
-The notation records the same sequence as the diagram. $x_i$ is the information entering the model for case $i$. The function $f_\theta$ is the fitted rule. Applying that function to $x_i$ produces $\hat y_i$, the prediction. The observed $y_i$ is then used to assess the prediction during training or evaluation. The notation does not imply that $x_i$ causes $y_i$; it specifies how the prediction problem is represented.
+The notation records the sequence in the diagram. $x_i$ enters the fitted rule $f_\theta$. Applying the rule produces $\hat y_i$. The observed outcome $y_i$ is used later to judge that prediction during training or evaluation. This notation states how the prediction is calculated; it says nothing about whether the inputs cause the outcome.
 
 ### What the model can and cannot learn
 
-The model only has access to the information encoded in the training data and representation. If distance to a service point is measured poorly, the model receives a noisy version of that feature. If prior participation is missing for households who moved between administrative systems, the missingness may become a more informative signal than the recorded value. If the label is systematically absent for a subgroup, the training objective does not correct the problem by itself.
+The fitted rule can only use what is recorded in the earlier cases. If distance to the service point is measured poorly, the model receives a noisy version of distance. If earlier participation is missing for households who moved between administrative systems, the absence of a record may tell the model more than the recorded value. If outcomes are missing for one subgroup, fitting the model does not repair that absence.
 
-This is why data preparation is part of model design. Decisions about coding, missing values, exclusions, time windows, and aggregation alter the statistical problem. They can change which population is represented and which patterns are available to the model.
+Preparing the data is therefore part of defining the prediction problem. Decisions about coding, missing values, exclusions, time windows, and aggregation change who is represented and what pattern the model can find.
 
 ### Baselines are part of the evidence
 
-A model should be compared with a simple baseline. For a binary outcome, the baseline may always predict the majority class or use the overall uptake rate as the probability prediction. For a continuous outcome, it may predict the training mean for every case. A complex model that does not improve on a baseline has not demonstrated useful predictive structure.
+A prediction score has little meaning without a comparison. A simple baseline supplies one. For a yes/no outcome, it might always predict the most common outcome or assign every case the overall uptake rate. For a continuous outcome, it might predict the training mean for every case. A more complicated model that cannot improve on this comparison has not shown that it has found a useful pattern.
 
-Baselines also reveal whether a metric is being interpreted correctly. If 90 per cent of cases are negative, a classifier that always predicts “negative” achieves 90 per cent accuracy while detecting no positive cases. Accuracy alone therefore hides the distribution of errors.
+Baselines also expose misleading metrics. If 90 per cent of cases have no uptake, a classifier that always predicts no uptake will be 90 per cent accurate while identifying none of the households that do take up the programme. Accuracy alone then conceals the error that matters for outreach.
 
 ### Evaluation follows the decision
 
-Evaluation metrics should reflect how predictions will be used. If missing a potential beneficiary is costly, recall may matter more than precision. If follow-up is expensive, precision may matter more. If a model supplies risk scores to different teams, calibration may be more useful than a ranking metric: among cases assigned a probability of 0.7, roughly 70 per cent should experience the outcome if the probabilities are well calibrated.
+The right evaluation depends on the decision. If failing to contact a household that would take up the programme is costly, it may be reasonable to prioritise recall: the share of actual uptake cases identified. If contact is expensive, precision may matter more: the share of contacted households that do take up the programme. If the model supplies probabilities, calibration asks a different question. Among cases assigned a probability near 0.7, did roughly 70 per cent take up the programme?
 
 ```{python}
 #| label: fig-calibration
@@ -268,9 +273,11 @@ plt.show()
 
 The diagonal represents agreement between predicted probabilities and observed frequencies. The teal series stays close to that reference. The orange series is overconfident: its probabilities are more extreme than the observed outcome rates. For example, cases assigned a mean probability of 0.80 have an observed rate of 0.69 in this illustration. Calibration is estimated on held-out observations and is uncertain when few cases fall in a probability range. Guo and colleagues use reliability diagrams and related summaries to assess calibration in neural-network classifiers [@guo2017calibration].
 
-No metric resolves these choices automatically. The metric makes a particular error structure visible and leaves other aspects unmeasured.
+No metric makes this choice automatically. Each reveals one pattern of error and leaves other consequences unmeasured.
 
-### The ML workflow
+### From task to use
+
+The workflow follows the order in which decisions constrain one another. The target and prediction moment determine which information can be used. The data and representation determine what the model receives. Evaluation determines whether the fitted rule is adequate for its intended use.
 
 1. **Define the task.** Specify the population, prediction moment, target, and decision that may use the prediction.
 2. **Construct the data.** Identify observations, features, labels, missing values, and measurement limits.
@@ -281,11 +288,13 @@ No metric resolves these choices automatically. The metric makes a particular er
 7. **Evaluate once on held-out data.** The test set estimates performance on new cases.
 8. **Deploy and monitor.** Check whether data, performance, and consequences change over time.
 
-### Training, validation, testing, and inference
+### Fitting is not final evaluation
 
-The training set is used to fit parameters. The validation set is used to make choices about the model. The test set is held back until the choices are complete. Once the model is deployed, **inference** means applying the fixed model to new inputs.
+The training set is used to fit parameters. The validation set is used to choose among versions of the procedure, for example different model sizes or learning rates. The test set is held back until those choices are complete. Once the model is deployed, **inference** means applying the fitted model to new inputs.
 
-If the test set is repeatedly inspected and used to guide decisions, it is no longer a clean test set. This is a subtle but common form of leakage: information from the evaluation data has influenced the model-development process.
+If test results are repeatedly inspected and used to guide these decisions, the test data have become part of development. The final score is then too optimistic because information from the evaluation data has influenced the procedure.
+
+The figure marks this separation. Training and validation belong to the development loop. The test set is used only after that loop has produced one fixed procedure.
 
 ```{python}
 #| label: fig-data-split
@@ -317,19 +326,19 @@ plt.show()
 
 ### Three common learning settings
 
-**Supervised learning** uses labelled examples. Regression predicts a continuous quantity such as income; classification predicts a category or probability such as uptake.
+**Supervised learning** uses earlier cases for which the outcome is known. Regression predicts a continuous quantity such as income. Classification predicts a category or probability, such as uptake.
 
-**Unsupervised learning** has no observed target for each example. The task may be to identify clusters, compress representations, or detect unusual observations.
+**Unsupervised learning** has no outcome to predict for each example. The task may be to identify clusters, compress a representation, or detect unusual observations.
 
 **Generative learning** models how data are produced or represented so that it can generate, complete, or transform examples. Large language models are trained as generative models by predicting tokens, but they also use supervised and preference-based stages later in development.
 
 These categories describe the information available to the training procedure, not the full behaviour of a deployed system. A single language model may be pretrained with a self-supervised next-token objective, fine-tuned with labelled demonstrations, and evaluated with a verifier or human preference signal. The stages use different forms of supervision even when the model architecture remains similar.
 
-At this point, the reader should be able to name the objects in the prediction task and state when each is available. The formal notation below is only a compact way to write that same sequence: features enter a fitted rule, which produces a prediction that can be compared with the recorded label.
+The prediction task now has its parts: information available before the decision, an outcome observed later, a fitted rule, and a way to judge its output. Level 3 writes the same process as equations and code. The notation is compact, but it refers to the objects already introduced here.
 
 ## Level 3 - Mathematics & Code
 
-At this level, the earlier vocabulary is translated into a small mathematical model. The equations state exactly what enters the model, what it produces, and how its errors are summarised. The code then implements the same objects so that the relationship between the notation and the computation remains visible.
+Level 3 starts with the smallest model that makes the earlier ideas calculable. The equations state what enters the rule, what it returns, and how its error is summarised. The code implements the same objects.
 
 ### A linear prediction model
 
@@ -339,15 +348,17 @@ $$
 \hat{y}_i=w^\top x_i+b.
 $$
 
-The equation can be read from left to right. $x_i$ is the vector of features for one observation. $w$ contains one weight for each feature. The dot product $w^\top x_i$ multiplies each feature by its weight and adds the results. The intercept $b$ shifts the total. The output $\hat y_i$ is therefore a prediction generated by the current parameter values; it is not yet a measure of whether the prediction is accurate.
+Read the equation from left to right. $x_i$ is the set of inputs for one case. $w$ contains one number for each input, indicating how that input contributes to the prediction. The dot product $w^\top x_i$ multiplies corresponding values and adds them. The intercept $b$ shifts the result. The output $\hat y_i$ is the prediction produced by the current parameter values. It does not yet tell us whether the prediction is accurate.
 
-Here, $w$ is a vector of feature weights and $b$ is an intercept. The model is not necessarily “true” because it is linear. It is a baseline: simple enough to understand, fast to fit, and useful for diagnosing whether the features contain predictive signal.
+Here, $w$ is a vector of feature weights and $b$ is an intercept. A linear model is not assumed to be the true data-generating process. It is a useful starting point because its inputs and fitted values can be inspected directly.
 
 For regression, a common loss is mean squared error:
 
 $$
 \operatorname{MSE}=\frac{1}{n}\sum_{i=1}^n(\hat{y}_i-y_i)^2.
 $$
+
+This loss squares the difference between each prediction and its observed outcome, then averages those squared differences. A large miss counts more heavily than a small one. The following code uses a simulated continuous engagement score so that the linear model and mean-squared-error calculation can be shown without introducing a second classifier at the same time. The workflow is the same as for the uptake example: split earlier cases, fit on one part, and check predictions on cases not used for fitting.
 
 ```{python}
 import numpy as np
@@ -380,7 +391,7 @@ print(f"test MSE: {mean_squared_error(y_test, predictions):.3f}")
 print(f"test R²:   {r2_score(y_test, predictions):.3f}")
 ```
 
-The $R^2$ statistic measures improvement over a constant-mean baseline in this setting. It is not a universal measure of usefulness. A model can have a respectable $R^2$ and still be poorly calibrated or too inaccurate for the decision it supports.
+$R^2$ reports improvement over predicting the same training-set mean for every case. It is one summary for this regression example, not a universal measure of usefulness. A model can have a respectable $R^2$ and still be too inaccurate for the decision it supports.
 
 ### Residuals are information
 
@@ -390,7 +401,7 @@ $$
 e_i=y_i-\hat y_i.
 $$
 
-The mean squared error reduces these residuals to one number. A residual plot preserves more information. A funnel shape can indicate non-constant variance; a curve can indicate that a linear model is missing a systematic relationship; clusters can reveal groups with different measurement processes.
+Mean squared error reduces all residuals to one number. A residual plot retains their pattern. A funnel shape can indicate that error spread changes across the outcome range. A curve can indicate that the linear rule is missing a systematic relationship. Clusters can reveal groups with different measurement processes.
 
 ```{python}
 #| label: fig-regression-residuals
@@ -410,11 +421,11 @@ plt.tight_layout()
 plt.show()
 ```
 
-The code is deliberately simple, but the principle extends to neural networks and language models. Aggregate performance can hide structured failures. Evaluation should therefore examine examples, subgroups, ranges of predicted risk, and the conditions under which the model is expected to operate.
+The code is simple, but the diagnostic principle also applies to neural networks and language models. One aggregate score can hide a systematic failure for a subgroup or part of the prediction range. Evaluation needs to inspect the cases and conditions that the reported score combines.
 
 ### A confusion matrix
 
-For binary classification, four counts describe the relationship between predictions and outcomes:
+For a yes/no prediction, each case falls into one of four groups:
 
 |  | Observed positive | Observed negative |
 |---|---:|---:|
@@ -428,11 +439,11 @@ $$
 \text{recall}=\frac{TP}{TP+FN}.
 $$
 
-Precision asks: among predicted positives, how many were positive? Recall asks: among observed positives, how many did the model identify? They answer different questions and can move in opposite directions as the threshold changes.
+Precision asks: of the households predicted to take up the programme, how many did so? Recall asks: of the households that did take up the programme, how many did the model identify? The two can move in opposite directions when the decision threshold changes.
 
 ### Classification and probabilities
 
-For binary classification, a model may output a score that is converted into a probability $p_i$ between 0 and 1. A threshold turns that probability into a decision:
+For a yes/no outcome, a model may return a probability $p_i$ between 0 and 1. A threshold then turns that probability into an action category:
 
 $$
 \hat{y}_i=
@@ -442,7 +453,7 @@ $$
 \end{cases}
 $$
 
-Changing $t$ changes the balance between false positives and false negatives. There is no threshold that is best in the abstract; the choice depends on the consequences of each error.
+Changing $t$ changes who is treated as a predicted uptake case. A higher threshold usually contacts fewer households, reducing some false positives while missing more households who would have taken up the programme. The appropriate threshold follows from those consequences.
 
 ```{python}
 #| label: fig-threshold
@@ -464,21 +475,21 @@ plt.show()
 
 ## Level 4 - Research & Systems
 
-The final level changes the question. It asks what assumptions are required for the preceding workflow to work outside the development data, and what additional problems arise when predictions are used by an institution. The focus is therefore on generalisation, measurement, deployment, and consequences.
+The preceding levels showed how to fit and assess a rule with earlier data. Using that rule in a real decision adds a further question: do the data, outcome, and error measures still describe the setting in which the prediction will be used? This level examines the boundary between a successful development exercise and a defensible deployed system.
 
 ### The training objective is not the deployment objective
 
-Most formal ML training minimises an average loss over observed examples. A deployed system may be judged by a different quantity: service access, safety, cost, equity, response time, or downstream decisions. The training loss is a proxy for the real objective. This gap between the fitted model and the surrounding production system is a documented source of technical debt [@sculley2015].
+Training commonly minimises an average loss over observed examples. A programme may instead be judged by service access, safety, cost, equity, response time, or the quality of the decisions that follow. Training loss is therefore a proxy, not the full purpose of the system. This gap between the fitted model and its surrounding production system is a documented source of technical debt [@sculley2015].
 
-This gap is one reason that data and evaluation design matter so much. If the label is measured with error, the model may learn the measurement process. If the data exclude a population, test performance may not describe that population. If the deployment environment changes, yesterday’s test set may no longer be informative.
+If the recorded outcome is measured with error, the model may learn that measurement process. If the data exclude a population, a test score does not describe that population. If the setting changes after deployment, an earlier test set may no longer be informative. These are failures of the prediction claim, not defects that a lower training loss can repair.
 
-### Generalization and overfitting
+### Generalisation and overfitting
 
-A model that memorises its training examples can achieve low training loss and poor performance on new cases. This is overfitting. Generalisation is the ability to perform well on observations drawn from the relevant target population.
+A model can fit its training cases closely and still perform poorly on new cases. This is overfitting. Generalisation is performance on observations from the population and conditions the prediction is intended to cover.
 
-Model complexity is not automatically bad. A complex model can represent useful structure that a simple model cannot. The practical question is whether the additional flexibility captures stable signal or accidental features of the development data.
+Additional flexibility is not automatically harmful. A more flexible model can represent a useful pattern that a simple rule misses. The question is whether that extra flexibility captures a pattern that recurs, or details specific to the earlier cases.
 
-Overfitting is not limited to models with many visible parameters. It can result from repeated choices by the analyst: trying many feature definitions, thresholds, samples, or model configurations and reporting the most favourable test result. The effective complexity of the workflow includes these decisions, even when the final model is small.
+Overfitting is not limited to models with many visible parameters. It can also arise when development repeatedly tries feature definitions, thresholds, samples, or model configurations and reports the most favourable result. Those choices are part of the procedure being evaluated, even if the final model is small.
 
 ```{python}
 #| label: fig-generalization
@@ -500,9 +511,9 @@ plt.show()
 
 ### Leakage, shift, and subgroup performance
 
-**Data leakage** occurs when information unavailable at prediction time, or information derived from the outcome, enters the features. Leakage can produce impressive validation scores and disappointing deployment performance.
+**Data leakage** occurs when the model receives information that would not be available when the prediction is made, including information derived from the later outcome. A variable recording programme completion, for example, cannot help decide whom to contact before enrolment. Leakage can produce impressive development scores and disappointing performance once the model is used.
 
-**Distribution shift** occurs when the relationship between inputs and outcomes changes, or when the deployment population differs from the training population. Monitoring should therefore include input distributions, missingness, calibration, subgroup performance, and decision consequences—not only an overall accuracy score.
+**Distribution shift** occurs when the people, records, or relationship between inputs and outcomes differ from those used for fitting. Monitoring should check input distributions, missingness, calibration, subgroup performance, and the consequences of decisions, not only one overall accuracy score.
 
 ```{python}
 #| label: fig-distribution-shift
@@ -564,11 +575,11 @@ plt.show()
 
 The left panel shows an input-distribution change: households in deployment are located farther away than households in the training data. Such a shift does not by itself prove that the model is wrong, but it means that the model is being used more often in a region with less training support. The right panel shows a change in the conditional relationship: at the same distance, uptake is lower in deployment than the relationship estimated during training. In that case, retaining the original mapping produces systematically high probabilities. Empirical studies of dataset shift show that predictive accuracy and calibration can deteriorate together, and that calibration measured on the original test distribution need not survive the shift [@ovadia2019].
 
-**Fairness** is not a single metric. Different groups may differ in base rates, error costs, calibration, or access to measurement. A model should be assessed in relation to the decision and institutional context in which it is used.
+**Fairness** cannot be read from one metric. Groups can differ in outcome rates, error costs, calibration, and access to measurement. The assessment must return to the decision and institutional setting in which the prediction is used.
 
-The distinction between missingness and absence is often material. If a feature is missing because a household was never reached, missingness may encode prior access to the programme. Imputing a single average value does not remove that institutional pattern; it may conceal it. A useful data audit therefore asks who is measured, who is missing, and why.
+Missing values also have a history. If a household has no recorded visits because it was never reached, that absence may reflect earlier access to the programme. Replacing the missing value with a single average does not remove the pattern; it can hide it. A data audit asks who is measured, who is missing, and why.
 
-Evaluation should also be aligned with the unit of deployment. Randomly splitting rows can overstate performance when several rows belong to the same person, household, institution, or time period. A model that predicts a future month should generally be evaluated with a time-respecting split. A model intended for new institutions should be tested on institutions not represented in training. The appropriate split follows the claim about generalisation.
+The evaluation split must also match the intended use. Randomly splitting rows can overstate performance when several rows belong to the same household, institution, or time period. A model used for a future month should usually be tested on later data. A model used in new institutions should be tested on institutions absent from training. The split defines the generalisation claim.
 
 ### Prediction is not causal inference
 

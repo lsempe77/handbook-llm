@@ -5,9 +5,9 @@ subtitle: "Changing the learning problem to improve transfer"
 
 ## The problem
 
-Chapter 9 showed why a flexible fitted rule can follow sample-specific noise. Reducing the model's nominal capacity is one response, but it is not the only one. Regularisation changes the learning procedure so that, among available fits, some are preferred: a penalty can make large parameters costly; dropout can train changing subnetworks; augmentation can add transformations judged label-preserving; and early stopping can select an earlier checkpoint.
+In Chapter 9, the degree-15 polynomial followed the 24 training observations closely but oscillated between them. Reducing its degree would remove some of that flexibility. Another option is to retain the same polynomial and change which of its possible fits the learning procedure prefers.
 
-None of these operations repairs an invalid label, a leaking split, or a population absent from the evaluation design. Each adds an assumption about the fitted solution, the data, or the optimisation path. The method and its strength must consequently be chosen using validation evidence and assessed against the intended transfer task.
+Ridge regularisation does this by making large coefficients costly. Neural networks use related but distinct choices: penalties on parameters, dropout during training, transformations of the input data, or a rule for retaining an earlier checkpoint. They all alter how the model is fitted, rather than merely changing the score reported at the end.
 
 ### A controlled example
 
@@ -17,9 +17,9 @@ $$
 y=\sin(\pi x)+0.3x+\varepsilon,\qquad \varepsilon\sim\mathcal N(0,0.25^2),
 $$
 
-using a degree-15 polynomial. Rather than lowering the degree, ridge regularisation retains all polynomial terms and penalises large coefficients. This isolates the effect of regularisation from a change in the model's nominal feature set.
+using a degree-15 polynomial. Rather than lowering the degree, ridge retains all polynomial terms and penalises large coefficients. This lets us see the effect of the preference without changing the model's set of input terms.
 
-The figure compares two rules with the same input features and polynomial degree. The coloured curve changes because the objective changes: the ridge fit is permitted to accept more error on the observed points when that avoids extreme coefficients. This is a preference about solutions, not a claim that smoothness is always correct.
+The figure compares two rules with the same input features and polynomial degree. The coloured curve changes because the objective changes: the ridge fit is allowed to accept more error on the observed points when that avoids extreme coefficients.
 
 ```{python}
 #| label: fig-regularisation-intuition
@@ -69,9 +69,9 @@ The penalty does not delete high-degree terms. It makes solutions with large coe
 
 ### Regularisation expresses a preference among fitting solutions
 
-Many models can fit a finite dataset similarly. Regularisation adds information about which fitted solutions should be preferred. Ridge expresses a preference for smaller squared coefficients. Dropout trains subnetworks produced by random masks. Augmentation says that selected transformations should preserve the target. Early stopping prefers the parameter state reached before later optimisation steps.
+Many procedures can fit a finite dataset similarly. Regularisation adds a preference among those fitting solutions. Ridge prefers smaller squared coefficients. Dropout trains changing subnetworks created by random masks. Augmentation treats selected transformations as preserving the target. Early stopping retains a parameter state reached before later optimisation steps.
 
-These preferences can help when they match the problem. A penalty that shrinks a genuinely large effect, an augmentation that changes the label, or stopping before a pattern is learned can increase error. Regularisation strength therefore controls a trade-off, not a one-way improvement.
+These preferences can help when they match the problem. A penalty can be too strong, an augmentation can change the target, and early stopping can select a model before it has learned a useful pattern. Their strength is therefore selected with validation data, not assumed to be an improvement.
 
 ### Different methods intervene at different points
 
@@ -95,9 +95,9 @@ plt.tight_layout(); plt.show()
 
 The diagram prevents several category errors. Data augmentation changes the examples presented during training. A penalty changes the scalar objective. Dropout changes which units participate in a training pass. Early stopping selects a point along one optimisation trajectory. Their mechanisms are not interchangeable even when each reduces a validation error.
 
-### Regularisation cannot substitute for representative data
+### Regularisation remains part of model development
 
-A smoother function may extrapolate less violently and still fail after a change in measurement or population. Augmentation can encode known transformations, but it cannot reliably invent an unobserved subgroup or outcome mechanism. Validation and test sets must retain the variation the model is expected to handle.
+Regularisation changes the fitting procedure, so its type and strength are choices made during development. The validation and test roles from Chapter 9 still apply: a method that improves one development split has not yet established performance for every setting in which the model might be used.
 
 The next step is to locate each preference in the training procedure: the data presented, the scalar objective, the active network, or the point chosen on an optimisation path. Level 2 follows those mechanisms separately because they require different checks.
 

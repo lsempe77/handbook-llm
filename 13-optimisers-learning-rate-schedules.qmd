@@ -5,9 +5,9 @@ subtitle: "Turning gradients into a sequence of parameter updates"
 
 ## The problem
 
-Chapter 12 described how gradients can remain usable as activations change through a network. A usable gradient still does not specify the next parameter value. A mini-batch gradient is noisy, coordinates can have very different scales, and the update scale that is tolerable at the start of training may be wasteful or unstable later. An optimiser specifies how a sequence of gradients becomes a sequence of parameter changes.
+Chapter 12 helped ensure that gradients can reach the parameters that need them. A gradient says which small change would reduce the current loss. It does not determine how far to move, how much to trust a gradient from one mini-batch, or whether different parameters should move by the same amount.
 
-Optimisers transform gradients; they do not replace them. Momentum retains a direction from earlier updates. Adam combines moving averages of gradients and squared gradients. AdamW applies weight decay outside that adaptive transformation. A learning-rate schedule changes the overall update scale against an explicit training clock. The next result depends on the optimiser state as well as the current parameters and gradient.
+An optimiser makes those choices from the current gradient and, in many cases, a record of earlier ones. A learning-rate schedule changes the overall size of the updates as training progresses. Together they turn a sequence of gradients into a sequence of parameter values.
 
 ### A loss with unequal directions
 
@@ -75,10 +75,6 @@ The paths should not be read as a ranking. Their hyperparameters were selected t
 
 ::: {.concept-box .concept-core #concept-optimiser data-term="Optimiser and learning-rate schedule" data-domain="Training and evaluation"}
 **Optimiser and learning-rate schedule.** An optimiser transforms gradients into parameter updates and may retain state from earlier updates. A learning-rate schedule changes update scale over training. Both are part of the fitted procedure and must be recorded with the model.
-:::
-
-::: {.concept-box .concept-distinction #concept-l2-weight-decay data-term="L2 regularisation and weight decay" data-domain="Training and evaluation"}
-**L2 regularisation and decoupled weight decay.** L2 regularisation adds a parameter penalty to the objective. Decoupled weight decay shrinks parameters as part of the update rule. They can behave similarly in simple settings but are not generally the same under adaptive optimisation.
 :::
 
 ## Level 1 - Intuition
@@ -206,6 +202,10 @@ The first coordinate's raw gradient is much larger. Adam's second-moment divisio
 L2 regularisation adds $\lambda\theta$ to the gradient of the data loss. Under plain SGD, this produces the same update as multiplying the parameter by $(1-\eta\lambda)$ and then applying the data gradient. An adaptive optimiser rescales the added L2 gradient coordinate by coordinate, so the equivalence no longer holds.
 
 AdamW applies weight decay directly to the parameter, separately from the moment-normalised gradient [@adamw2019]. The distinction is operational: `weight_decay` can mean different mathematics depending on the optimiser and framework version. Chapter 10 introduced weight penalties as regularisation; this chapter specifies how the optimiser applies them.
+
+::: {.concept-box .concept-distinction #concept-l2-weight-decay data-term="L2 regularisation and weight decay" data-domain="Training and evaluation"}
+**L2 regularisation and decoupled weight decay.** L2 regularisation adds a parameter penalty to the objective. Decoupled weight decay shrinks parameters as part of the update rule. They can behave similarly in simple settings but are not generally the same under adaptive optimisation.
+:::
 
 ```{python}
 #| label: fig-adamw-weight-decay

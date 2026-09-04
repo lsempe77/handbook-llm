@@ -5,19 +5,21 @@ subtitle: "How models learn from being wrong"
 
 ## The problem
 
-Chapter 2 gave us a loss: one number that records how badly a particular parameter setting performs on observed cases. A loss alone does not tell the training procedure which parameter value to try next. Testing every possible setting is impossible for a model with many parameters.
+Chapter 2 gave the programme a way to score a rule: compare its estimates with earlier outcomes and calculate a loss. But the score alone does not tell the computer how to improve the rule. If changing one setting makes the loss smaller, should the computer keep moving in that direction? How far should it move? And what happens when a model has thousands or millions of settings rather than one?
 
-Gradient descent solves this local search problem. It asks a narrower question at the current setting: if the parameter moved a little, which direction would reduce the loss? The chapter begins with one parameter so that every step can be checked by hand before the same logic is applied to a network.
+Gradient descent answers the first of these questions by looking very close to the current setting. It does not search every possible version of the rule. Instead, it asks whether a small change would make the loss rise or fall, takes a step in the better direction, and repeats the process.
 
-### The running example
+### A rule with one adjustable setting
 
-Suppose a model has one parameter, $w$, and its error is described by:
+Start with a rule that has just one setting, called $w$. Its loss is:
 
 $$
 L(w) = (w - 3)^2.
 $$
 
-The best value is $w=3$, because that makes the loss equal to zero. In a real model, the loss function is usually much more complicated and depends on thousands or billions of parameters. The one-dimensional example is useful because we can see the entire landscape rather than relying on intuition alone.
+For this example, the best setting is $w=3$, because it makes the loss zero. Real models have far more settings and much more complicated loss functions, but one setting is enough to see the basic problem: we are at one value of $w$ and need a principled way to choose the next value.
+
+The chart shows every possible setting for this small example. Along the bottom is the current value of $w$; the height of the curve is the loss produced by that value. The orange point is the lowest point on the curve. A real training procedure cannot usually draw this whole chart, but it can still use information from the part of the curve immediately around its current setting.
 
 ```{python}
 #| label: fig-loss-curve
@@ -46,15 +48,11 @@ plt.tight_layout()
 plt.show()
 ```
 
-The curve is the **optimisation landscape**. Its horizontal position represents a parameter value, and its height represents the loss produced by that value. Training changes the parameter in an attempt to move towards a low point.
-
-::: {.concept-box .concept-core #concept-gradient-descent data-term="Gradient descent" data-domain="Foundations" data-symbols="gradient; learning rate"}
-**Gradient descent.** An optimisation procedure that changes parameters in the direction expected to reduce a stated loss locally. The **gradient** records how that loss changes with each parameter, and the **learning rate** sets the size of one update. A lower loss after an update is evidence about the specified objective, not a general guarantee about future performance.
-:::
+The curve is often called a loss landscape. It is simply a picture of the score attached to each possible setting of $w$. Training means changing the setting so that the score falls.
 
 ## Level 1 - Intuition
 
-Read the curve before reading the update rule. Its horizontal position is one possible value of the parameter; its height is the loss produced by that value. At the marked point, training does not need to know the full curve. It needs enough local information to choose a safer next position.
+Suppose the rule currently uses $w=0.8$, marked by the orange point in the next figure. The programme does not know the full curve in a real model, but it can ask a local question: if $w$ were made slightly larger, would the loss go up or down? That is enough information to decide the direction of the next change.
 
 ```{python}
 #| label: fig-intuitive-slope
@@ -75,36 +73,27 @@ plt.tight_layout()
 plt.show()
 ```
 
-The solid curve gives the loss for every possible value of the parameter in this toy problem. The dashed line is the tangent at the current value. It records the local direction of change: at the marked point, moving to the right lowers the loss. The downhill arrow is therefore determined by the slope at the current point, not by knowledge of the whole curve.
+The solid curve shows the loss for every setting in this toy example. The dashed line touches the curve at the current point and shows its local tilt. Here it slopes downward to the right, so a slightly larger value of $w$ should reduce the loss. The update follows this local tilt; it does not rely on knowing that the orange minimum lies at $w=3$.
 
-### Walking downhill in fog
+The local tilt is called the **gradient**. In a one-setting problem, it tells us whether to increase or decrease the setting. In a many-setting problem, it gives one such direction for each setting. Gradient descent is the repeated process of calculating these directions, changing the settings a little, and calculating them again.
 
-Imagine standing on a mountain in thick fog. You cannot see the entire landscape, and you do not know where the valley is. You can only feel the ground immediately around your feet.
-
-To make progress, you could:
-
-1. test the slope in several nearby directions;
-2. identify the direction that goes most steeply downward;
-3. take a small step;
-4. repeat the process.
-
-The mountain is the loss landscape. Your location is the current set of model parameters. The local slope is the gradient. Each small step is a parameter update.
-
-The analogy captures both the power and the limitation of gradient descent. It is powerful because the model does not need a map of the whole landscape. It only needs local information. It is limited because local information does not guarantee that the model will find the best point in the entire landscape.
+::: {.concept-box .concept-core #concept-gradient-descent data-term="Gradient descent" data-domain="Foundations" data-symbols="gradient; learning rate"}
+**Gradient descent.** A procedure for improving a fitted rule step by step. The **gradient** indicates how a small change in each parameter would change the loss, and the **learning rate** determines the size of the step.
+:::
 
 ### Why not make one enormous step?
 
-If the ground slopes downward to your left, a huge leap to the left might carry you past the valley and up the other side. A small step is safer. The **learning rate** controls how large the step is.
+If the loss falls when $w$ increases, it does not follow that the largest possible increase is best. A very large change can pass the low point and land where the loss is high again. The **learning rate** controls the size of each change.
 
 - A very small learning rate produces careful but slow progress.
 - A suitable learning rate produces stable progress.
 - A very large learning rate can cause the model to jump back and forth or diverge.
 
-The objective is not to move as quickly as possible at every moment. It is to make reliable progress toward a low-loss region.
-
-The downhill image now gives us an update strategy, but it still leaves two questions. How is the local slope calculated, and how far should the parameter move after it is known? The next level makes one update explicit.
+The aim is not to make the parameter move as far as possible. It is to reduce loss reliably over a sequence of updates. Level 2 follows one complete update: make predictions, calculate loss, calculate the gradient, and change the parameters.
 
 ## Level 2 - Mechanics
+
+One update has four linked stages. The model first makes predictions using its current settings. Those predictions are scored against the recorded outcomes. The gradient then shows how the score would respond to small changes in the settings, and the update applies one chosen change. The diagram gives the order; each stage uses the result of the preceding one.
 
 ```{python}
 #| label: fig-learning-cycle
@@ -125,20 +114,11 @@ plt.tight_layout()
 plt.show()
 ```
 
-The diagram separates the quantities that are often collapsed into the phrase “the model learns”. Prediction produces an output. The loss compares that output with the target. The gradient describes how parameter changes would affect the loss. The update applies a chosen step, after which the model is evaluated again. The cycle is a sequence of computations, not a single act of adjustment.
+The diagram makes clear that loss comes before the gradient. The model cannot calculate a direction for improvement until it has first made predictions and scored them. After the update, the changed settings produce new predictions, and the cycle begins again.
 
 ### The learning cycle
 
-For a supervised-learning problem, one training step looks like this:
-
-1. The model receives input data.
-2. Its parameters determine a prediction.
-3. A loss function compares that prediction with the target.
-4. The gradient measures how each parameter affects the loss.
-5. The optimiser changes the parameters.
-6. The cycle repeats on new examples.
-
-The loss is therefore feedback, not an instruction. A loss of 42 tells us that the model is wrong, but it does not by itself tell us which internal parameters should change. The gradient provides that directional information.
+The loss is feedback, not an instruction. A loss of 42 tells us that the model is wrong, but it does not itself identify the parameter that should change or the direction of the change. The gradient provides that information.
 
 ### A concrete prediction problem
 
@@ -158,17 +138,11 @@ The model does not “know” that a particular prediction is too high in the hu
 
 ### What a slope means locally
 
-The derivative is a local statement. Near the current parameter value, it approximates how much the loss will change if the parameter changes slightly:
-
-$$
-L(w+\Delta w)\approx L(w)+\frac{dL}{dw}\Delta w.
-$$
-
-If the derivative is positive, a positive change in $w$ increases the loss, so the update generally moves $w$ downward. If the derivative is negative, increasing $w$ tends to reduce the loss, so the update moves upward. This is why the sign matters, while the magnitude determines how strongly the algorithm responds.
+Near its current value, the slope tells the model whether a small increase in $w$ is expected to raise or lower the loss. A positive slope means that increasing $w$ makes the loss worse, so the update moves downward. A negative slope means that increasing $w$ improves the loss, so the update moves upward. The size of the slope helps determine how strongly the algorithm responds.
 
 ### What happens at a minimum?
 
-At a smooth local minimum, the slope is zero because the curve is momentarily flat. A zero gradient is a stopping signal, not a certificate that the model is globally optimal. In one-dimensional convex problems such as the quadratic example, the distinction is harmless. In neural networks, the objective is usually non-convex and can contain many stationary points.
+At the bottom of a smooth valley, the local slope is zero because neither small direction lowers the loss immediately. The quadratic example has one such lowest point. Large neural-network objectives have a more complicated shape; Level 4 returns to what that changes in practice.
 
 ### One parameter at a time
 
@@ -214,7 +188,7 @@ The worked update identifies the two ingredients that must be calculated at ever
 
 ## Level 3 - Mathematics & Code
 
-The mathematical treatment makes the downhill analogy precise. We first define a loss as a function of a parameter, calculate its derivative, and apply the update rule. The code repeats these steps explicitly so that each line corresponds to one part of the equation.
+Level 2 established the order of one update. This level writes the same calculation in notation, derives the local direction, and implements the update so that each line of code can be checked against the equation.
 
 ### What is a gradient?
 

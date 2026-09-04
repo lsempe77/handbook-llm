@@ -5,9 +5,9 @@ subtitle: "From data to updated predictions"
 
 ## The problem
 
-The preceding chapters separated the components of neural-network learning. A useful model has to connect them in the right order: representations pass through layers and activations, a loss compares scores with labels, backpropagation calculates gradients, and an optimiser changes parameters before the next batch arrives.
+Chapters 1–7 introduced the parts of a neural network separately. We now have data, layers, activations, a loss, a way to calculate gradients, and an optimiser. None of those parts learns on its own. They must be connected in an order that lets an earlier prediction change the parameters used for the next one.
 
-This chapter assembles those operations into one small binary classifier. The synthetic data do not stand in for a real population. They make one property visible: a straight decision boundary is inadequate, while a small network can learn a curved boundary. The task is to inspect the training system, not to claim a benchmark result.
+This chapter joins them in one small binary classifier. The data are deliberately simple: two curved groups that one straight boundary cannot separate. They make the training sequence visible before the book turns to the harder question of whether a fitted model will work beyond the records used to train it.
 
 ### The data boundary
 
@@ -62,15 +62,11 @@ ax.legend(ncol=2, fontsize=9)
 plt.tight_layout(); plt.show()
 ```
 
-The outlined test observations follow the same data-generating process but remain outside training. This split is sufficient for explaining the mechanics. It is not sufficient evidence for selecting an architecture or estimating expected performance in a real application; Chapters 9 and 10 examine generalisation and regularisation in detail.
-
-::: {.concept-box .concept-core #concept-training-loop data-term="Training loop" data-domain="Foundations"}
-**Training loop.** The repeated sequence that selects a batch, runs a forward calculation, evaluates a loss, calculates gradients, and updates parameters. Its state includes more than model weights when resuming a run: optimiser state, random-number state, data order, and fitted preprocessing can change later updates or predictions.
-:::
+The outlined observations remain outside training. They let us see whether the final boundary extends to records that did not contribute to the updates. The split is for this illustration; Chapter 9 develops the evidence required to assess generalisation.
 
 ## Level 1 - Intuition
 
-The training loop is the point at which the preceding chapters become one procedure. Follow one cycle before reading the implementation: select a batch, calculate scores, measure their error, send gradients backwards, and update the weights that will be used for the next batch.
+The training loop is where the earlier chapters become one procedure. Follow one cycle before reading the implementation: take a batch, calculate scores, compare them with the recorded outcomes, send the resulting information backwards, and change the weights used for the next batch.
 
 ### Training is a repeated comparison followed by a correction
 
@@ -99,21 +95,19 @@ ax.set_xlim(0,0.93); ax.set_ylim(0.05,0.85); ax.axis("off")
 plt.tight_layout(); plt.show()
 ```
 
-Each box has one role. The batch supplies inputs and labels. The forward pass produces logits. The loss turns the logits and labels into a scalar training objective. Backpropagation calculates gradients of that scalar with respect to the parameters. The optimiser uses the gradients to update the parameters. Reversing any of these dependencies would change or invalidate the algorithm.
+Each box has one role. The batch supplies inputs and recorded outcomes. The forward pass produces scores. The loss compares those scores with the outcomes. Backpropagation calculates how each parameter contributed to that loss, and the optimiser changes the parameters. Reversing these dependencies would change the algorithm.
+
+::: {.concept-box .concept-core #concept-training-loop data-term="Training loop" data-domain="Foundations"}
+**Training loop.** The repeated sequence that takes a batch, makes predictions, calculates their loss, traces gradients backwards, and updates the model's parameters.
+:::
 
 ### The network creates a boundary by combining simple transformations
 
 The model used here has two input features, sixteen hidden units with tanh activations, and one output logit. Each hidden unit creates one transformed view of the input. The output layer combines those sixteen values. Because tanh is nonlinear, the resulting boundary can bend around the interlocking classes.
 
-The output is a logit rather than a probability. A sigmoid transformation converts it into a number between zero and one when a probability is required for interpretation or classification. During training, the loss receives the logits directly because the combined logit-and-loss calculation is more numerically stable.
+The final layer produces one score. In the next level, that score will be converted into a probability and compared with the known class. For now, the important point is that the network can bend its boundary because the hidden layer uses a non-linear activation.
 
-### Training success is narrower than model usefulness
-
-A falling training loss shows that the optimiser is fitting the training objective. It does not show that the labels are valid, that performance transfers to another population, or that the resulting decision is appropriate. The synthetic example controls the label-generating process and is used only to expose the computation. A real model requires evidence about measurement, generalisation, calibration, errors across relevant groups, and consequences of use.
-
-Level 1 identifies the loop and its evidential boundary. Level 2 follows one observation through the operations that the loop repeats.
-
-The loop gives the sequence, but a reliable implementation needs each stage to retain its own role. The next level traces the objects passed between stages and explains why a prediction, a probability, a loss, and a gradient are not interchangeable.
+Level 2 follows one observation through the operations that the loop repeats.
 
 ## Level 2 - Mechanics
 
@@ -190,6 +184,10 @@ plt.tight_layout(); plt.show()
 
 The changes are intentionally small. The fourth parameter feeds the inactive second hidden unit, so its gradient is zero for this observation and its bar does not move. A batch can produce a non-zero gradient for the same parameter if other observations activate that unit.
 
+## Level 3 - Mathematics & Code
+
+Level 2 followed one observation through one update. Actual code carries out the same chain for a batch, keeps gradients and optimiser state separately, and evaluates the trained model without changing it.
+
 ### A mini-batch loop repeats four actions
 
 For each batch, an implementation normally clears stored gradients, runs the forward pass and loss, runs backpropagation, and asks the optimiser to update the parameters. PyTorch accumulates gradients by default. Omitting the clearing step therefore adds the current batch gradient to gradients already stored on each parameter. Gradient accumulation can be deliberate when several micro-batches should form one larger effective batch. Without that intention, it changes the update rule.
@@ -197,12 +195,6 @@ For each batch, an implementation normally clears stored gradients, runs the for
 ### Evaluation uses the model without parameter updates
 
 Evaluation requires no backward pass or optimiser step. The model should be placed in evaluation mode because dropout and batch normalisation behave differently during training. Gradient tracking should also be disabled to reduce memory use. This network contains neither dropout nor batch normalisation, but using the correct pattern prevents errors when the architecture changes.
-
-Level 2 has followed the order of operations. Level 3 writes the same system in matrix notation and executable code.
-
-The mechanics establish the contract for one training step. The mathematics and code below repeat that contract across batches and make the parameter updates observable rather than treating the framework as a black box.
-
-## Level 3 - Mathematics & Code
 
 ### The batch equations define the complete model
 

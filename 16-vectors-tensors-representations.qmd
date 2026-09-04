@@ -5,13 +5,13 @@ subtitle: "Giving numerical arrays a computational and semantic structure"
 
 ## The problem
 
-Parts I and II defined models, gradients, updates, and the systems that execute them. Every one of those operations acts on numerical arrays. The values alone do not identify what an axis means, which entries belong to one observation, or whether two coordinates can be compared. Those meanings come from the representation and the operations that produce it.
+Start with a small batch: two sequences, four positions in each sequence, and three measured values at every position. A program can store those 24 numbers in an array of shape $2\times4\times3$. It cannot infer from that shape whether its first axis identifies documents, households, or images; whether its second axis is time, token position, or a spatial location; or what the final three values describe.
 
-This chapter begins Part III by making those array contracts explicit before the book turns to embeddings and sequences. It separates rank from vector dimension, attaches a meaning to each axis, and follows how transformations preserve or discard distinctions. A tensor can have a valid shape while carrying the wrong semantics for the operation applied to it.
+The models, gradients, updates, and systems in Parts I and II all operate on arrays of this kind. This chapter begins Part III by making their contracts explicit before the book turns to embeddings and sequences. It separates rank from vector dimension, attaches a meaning to each axis, and follows how transformations preserve or discard distinctions. An array can have a valid shape while carrying the wrong meaning for the operation applied to it.
 
 ### A tensor with named axes
 
-The chapter uses a constructed batch containing two sequences, four positions per sequence, and three measured features per position. Its shape is therefore $2\times4\times3$, written more generally as $B\times S\times D$ for batch, sequence position, and feature dimension.
+The running example uses the batch just described. Its shape is $2\times4\times3$, written more generally as $B\times S\times D$ for batch, sequence position, and feature dimension.
 
 The first diagram only counts axes. It does not establish the meaning of any axis, which is why the next examples name them. Keep that distinction in view throughout the chapter: shape provides a computational interface; the representation contract tells the operation what the stored positions stand for.
 
@@ -52,7 +52,7 @@ Rank counts axes, not the number of stored values and not the dimension of every
 
 ### A tensor is an array with a shape
 
-A scalar contains one numerical value. A vector arranges values along one axis. A matrix uses two axes. In machine-learning software, *tensor* is the general name for an array with any number of axes, including these simpler cases.
+A scalar contains one numerical value. A vector arranges values along one axis. A matrix uses two axes. In machine-learning software, *tensor* is the general name for an array with any number of axes, including these simpler cases. The term names the container; it does not tell the reader what the entries represent.
 
 The shape states how many positions exist along each axis. A tensor with shape `(2, 4, 3)` contains $2\times4\times3=24$ values. Shape does not say whether the first axis contains patients, images, documents, or independent simulation runs. It also does not say whether the final three values are colour channels, sensor measurements, or coordinates learned by a network.
 

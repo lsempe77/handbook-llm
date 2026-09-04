@@ -5,15 +5,15 @@ subtitle: "Setting the scale before learning begins"
 
 ## The problem
 
-Regularisation affects which solutions are preferred once optimisation is under way. Before the first update, the network must still transmit different signals to different hidden units and return usable gradients to early layers. Identical initial values leave hidden units indistinguishable. A poor initial scale can make signals vanish across depth, or make activations and derivatives grow until learning is numerically unstable.
+Before a network sees its first training batch, every weight already has a value. Those starting values cannot contain a learned pattern, but they determine whether different hidden units begin differently and whether information can travel through the network at all. If all units start alike, they remain alike. If the values are too small or too large, repeated layers can erase or amplify the signal before learning has a chance to correct it.
 
-Initialisation is not a shortcut to the final model. It establishes the conditions under which architecture, activation, normalisation, residual paths, optimiser, precision, and data begin to interact. The appropriate question is therefore empirical as well as algebraic: what signals and gradients does this implemented network actually produce at step zero?
+Initialisation is the choice of those starting values. It is not a shortcut to the final model. Its practical test is simple: before training, does this implemented network produce distinct activations and usable gradients from one end to the other?
 
 ### A diagnostic experiment
 
-The chapter repeatedly propagates a batch of independent, standard-normal inputs through 30 width-128 layers. The network is deliberately deeper than needed for a practical toy prediction task because changes in scale become visible. Biases start at zero and ReLU is applied after each matrix multiplication.
+The chapter propagates a batch of simple random inputs through 30 layers, each 128 units wide. The network is deliberately deeper than a practical toy task needs because changes in scale become visible. Biases start at zero and ReLU follows each matrix multiplication.
 
-The first chart tracks the standard deviation of the activation leaving each layer on a log scale. A roughly horizontal trajectory means that distinct inputs remain distinguishable at this diagnostic stage; a steep decline or rise signals an avoidable problem before any training data or optimiser setting has been blamed.
+The first chart tracks how much the activation values differ from one another after each layer. A roughly horizontal trajectory means that distinct inputs remain distinguishable at this diagnostic stage. A steep decline or rise identifies a problem before the optimiser has taken a single step.
 
 ```{python}
 #| label: fig-initial-scale
@@ -89,9 +89,9 @@ The immediate checks are whether units begin differently and whether forward and
 
 ## Level 2 - Mechanics
 
-### Each layer performs three scale-changing operations
+### Each layer changes the scale of what it receives
 
-For $z^{(l)}=W^{(l)}h^{(l-1)}+b^{(l)}$ and $h^{(l)}=\phi(z^{(l)})$, scale is affected by the incoming activation distribution, the number and variance of the weights, and the activation. ReLU sets roughly half of symmetric pre-activations to zero at initialisation. Tanh compresses large magnitudes towards $-1$ and $1$.
+At each layer, the incoming values are multiplied by weights, added together, and passed through an activation. The scale therefore depends on the incoming values, the number and spread of the weights, and the activation itself. ReLU sets roughly half of symmetric pre-activations to zero at initialisation. Tanh compresses large magnitudes towards $-1$ and $1$.
 
 The following experiment applies tanh after one matrix multiplication and measures the fraction of pre-activations with $|z|>2$, where tanh is already relatively flat.
 

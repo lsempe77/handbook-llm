@@ -5,9 +5,9 @@ subtitle: "From fitting observed data to performing on new cases"
 
 ## The problem
 
-Chapter 8 established that a network can reduce loss on the records used to update its parameters. That result does not answer the next practical question: whether the same procedure will work on records it has not seen. The held-out result inspected while training Chapter 8 is development evidence, because it influenced the judgement that training was successful; it is not an untouched final test.
+The network in Chapter 8 learned a boundary that followed the training curves. It also looked promising on the observations set aside from those updates. The natural next question is whether that result would persist for other observations, rather than being a fortunate feature of this particular sample.
 
-Generalisation is performance on observations outside fitting and model selection, for a stated target population and operating condition. Overfitting is a training improvement that depends on details of the sample that do not recur. Training loss therefore establishes what the optimisation procedure achieved on observed data, not what it will achieve later, elsewhere, or under a changed measurement process.
+This is the problem of generalisation. A fitted rule can improve its training loss by learning a pattern that recurs, or by following details that arose only in the observations it happened to receive. The second outcome is overfitting. Training loss records what happened on the data used for updates; it cannot on its own tell us which kind of improvement occurred.
 
 ### A controlled example
 
@@ -61,11 +61,7 @@ plt.tight_layout(); plt.show()
 All three models see the same observations. The degree-1 model cannot represent the curved signal. The degree-5 model follows the broad pattern while leaving some noise unexplained. The degree-17 model can pass close to every training point, but it oscillates between them. Its greater training fit has produced a worse estimate of the known signal.
 
 ::: {.concept-box .concept-core #concept-generalisation data-term="Generalisation and overfitting" data-domain="Training and evaluation"}
-**Generalisation and overfitting.** Generalisation is performance on observations not used to fit or select the procedure, within a stated target population. Overfitting occurs when an apparent training improvement relies on details that do not transfer. Neither label can be inferred from training loss alone.
-:::
-
-::: {.concept-box .concept-distinction #concept-training-validation-test data-term="Training, validation, and test sets" data-domain="Training and evaluation"}
-**Training, validation, and test sets.** Training data estimate parameters. Validation data support choices among procedures or checkpoints and therefore belong to development. A test set is reserved for the final assessment after those choices are fixed. A **held-out** set is excluded from the particular fitting or selection stage under discussion; it is not automatically an untouched final test set.
+**Generalisation and overfitting.** Generalisation is performance on new observations from a stated target setting. Overfitting occurs when a training improvement depends on details that do not recur. Training loss alone cannot distinguish them.
 :::
 
 ## Level 1 - Intuition
@@ -76,23 +72,27 @@ Training data contain regularities that can recur and details that arose from sa
 
 Underfitting occurs when the model or training procedure fails to capture a transferable pattern that is present. Overfitting occurs when improvements on the training sample depend on details that do not transfer. Both are defined relative to a target: a model may generalise to new observations from the same source and fail after the population, measurement process, or deployment conditions change.
 
-### Held-out data create a partial test of transfer
+### New observations test whether the pattern carries over
 
-An observation cannot provide an independent assessment after its label has influenced parameter estimates or model choices. Holding out data preserves observations for later evaluation. Performance on those observations estimates transfer from the training sample to the process that generated the held-out sample.
+To learn whether the fitted rule carries over, we need observations whose outcomes did not help to choose it. Holding out observations provides that first check. If the model performs similarly on them, the result is evidence that the pattern extends beyond the training sample.
 
-The estimate remains uncertain. A small test set can be unusually easy or hard. A random split can place near-duplicates on both sides. A test set drawn at the same time and place may say little about later deployment. Held-out performance is evidence whose scope is set by the sampling and splitting procedure.
+That evidence has limits. A small holdout can be unusually easy or hard, and a random split can place near-duplicates on both sides. The next level separates the roles of training, validation, and final test observations.
 
 ### Capacity describes options, not inevitable behaviour
 
 A higher-capacity model can represent more functions. The degree-17 polynomial can represent the smoother degree-5 relationship as well as many oscillating alternatives. Capacity creates the possibility of fitting noise; it does not establish that a particular training algorithm will select the worst alternative. Data quantity, optimisation, architecture, and regularisation influence which fitted function is obtained.
 
-The immediate task is therefore to preserve observations for different jobs and to compare errors without confusing model development with final assessment. Level 2 makes that workflow explicit, then uses capacity and sample-size curves to diagnose the gap.
+The immediate task is to compare performance on observations used for fitting with performance on observations saved for evaluation. Level 2 makes the different roles explicit, then uses capacity and sample-size curves to diagnose the gap.
 
 ## Level 2 - Mechanics
 
 ### Training, validation, and test data answer different questions
 
 The training set estimates parameters. The validation set supports choices such as polynomial degree, hidden width, or stopping point. The test set is reserved for a final assessment after those choices are fixed. If the test result changes the model, the test set has become part of model development and a further untouched set is needed for an independent assessment.
+
+::: {.concept-box .concept-distinction #concept-training-validation-test data-term="Training, validation, and test sets" data-domain="Training and evaluation"}
+**Training, validation, and test sets.** Training data estimate parameters. Validation data support choices among procedures or checkpoints and therefore belong to development. A test set is reserved for final assessment after those choices are fixed. A **held-out** set is excluded from one fitting or selection stage; it is not automatically an untouched final test set.
+:::
 
 ```{python}
 #| label: fig-data-split-roles

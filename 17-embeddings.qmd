@@ -3,32 +3,13 @@ title: "Embeddings"
 subtitle: "Learning vector coordinates for discrete items and contexts"
 ---
 
-## Chapter orientation
+## The problem
 
-### Why this chapter matters
+Chapter 16 established that a representation needs both numerical values and a clear account of what those values stand for. A word type, product identifier, diagnosis code, or graph node is a category, not a measured quantity. An integer identifier makes the category easy to look up, but it creates a false numerical order: identifier 20 is not twice identifier 10, and adjacent identifiers need not be related.
 
-Many model inputs are discrete. A word type, product identifier, diagnosis code, or graph node is a category, not a measured quantity. Assigning integer identifiers makes these items indexable but creates a false numerical order: identifier 20 is not twice identifier 10, and adjacent identifiers need not be related.
+An embedding replaces that identifier with a learned vector. Later layers can take dot products, compare distances, and apply transformations to the vector. The coordinates are fitted from an objective and a dataset, so their geometry records the regularities that the training procedure rewards. It is not an authoritative map of meaning.
 
-An embedding assigns each item a learned vector. The vector gives later layers a compact set of coordinates on which dot products, distances, and transformations can operate. Those coordinates are fitted from an objective and a dataset. Their geometry therefore records statistical regularities and modelling choices, not an authoritative map of meaning.
-
-### Learning objectives
-
-By the end of this chapter, you should be able to:
-
-- explain why integer identifiers are unsuitable as numerical features;
-- distinguish one-hot vectors from dense embeddings;
-- describe an embedding layer as a trainable lookup table;
-- construct centre-context pairs from a sequence and explain how they train vectors;
-- derive the softmax and negative-sampling objectives used in predictive word embeddings;
-- calculate dot products, Euclidean distances, and cosine similarities;
-- explain how vector norms and global geometry affect nearest neighbours;
-- distinguish static item embeddings from contextual representations;
-- interpret analogies and projections without treating coordinates as intrinsic concepts;
-- identify frequency, coverage, bias, anisotropy, and evaluation problems;
-- account for embedding memory, sparse updates, sharding, and tied weights;
-- design an embedding audit for research or production use.
-
-### Running corpus
+### A small corpus makes the lookup visible
 
 The chapter uses a small constructed corpus containing animal and vehicle terms. Its purpose is to make co-occurrence counts, context windows, and fitted vectors inspectable. Results from this corpus illustrate mechanics; they do not provide evidence about natural-language semantics.
 

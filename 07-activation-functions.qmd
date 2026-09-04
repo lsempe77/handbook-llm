@@ -5,9 +5,9 @@ subtitle: "Why depth needs a change of shape"
 
 ## The problem
 
-Chapter 6 showed that layers can create a larger representation. But stacking affine layers alone does not create a richer input-output relationship: the complete stack can still be written as one affine transformation. More matrices are not enough.
+Chapter 6 showed how one layer can produce several values for the next. It may seem that adding further layers would automatically make the network able to describe more complicated patterns. It does not. If each layer only multiplies, adds, and passes its result on, the full stack still behaves like one straight-rule calculation.
 
-An activation function changes this result by altering each pre-activation before it enters the next layer. The local rule is simple; the consequence is that the network can use different linear relationships in different regions of the input space.
+An activation function changes a value before the next layer receives it. That small operation is what lets a network use one simple rule in one part of its input range and another elsewhere.
 
 ### The running calculations
 
@@ -17,29 +17,19 @@ $$
 z=(2,1.5,-1.5).
 $$
 
-Applying ReLU gives $h=(2,1.5,0)$. This example will be used to connect the forward calculation to the backward gradient.
+Applying ReLU gives $h=(2,1.5,0)$. We will begin by following this change one value at a time.
 
-A second, one-dimensional network will make the geometry visible:
-
-$$
-y(x)=\operatorname{ReLU}(2x+1)-\operatorname{ReLU}(2x-1).
-$$
-
-The two hidden units introduce changes in slope at $x=-0.5$ and $x=0.5$. Those changes cannot be produced by one affine function.
-
-::: {.concept-box .concept-core #concept-activation-function data-term="Activation function" data-domain="Foundations"}
-**Activation function.** A fixed, usually coordinate-wise non-linear transformation applied to a layer's pre-activations. Activations allow stacked layers to represent relationships that a composition of affine transformations cannot. An activation used inside a hidden layer has a different role from an output transformation interpreted as a probability.
-:::
+A second, one-dimensional example will show how changing individual values can produce a curve with different slopes.
 
 ## Level 1 - Intuition
 
-Read the two panels as a comparison of possible functions, not as a comparison of model size. The left-hand stack has more than one affine operation but retains one slope. The right-hand network changes slope when its ReLU units switch between inactive and active states.
+Read the two panels from left to right. The first model has several calculations but one straight input-output relationship. In the second, ReLU switches individual values on or off as the input changes, creating separate regions.
 
 ### More layers do not help if every layer follows the same straight rule
 
-An affine layer can rotate, rescale, and shift its input. A second affine layer can repeat those operations. Their composition is still one rotation, rescaling, and shift. The intermediate representation may have more coordinates, but the final relationship between input and output has not acquired a bend.
+An affine layer can rescale and shift its input. A second affine layer can do the same, but the combined result remains one straight relationship. The intermediate layer may contain more values, yet the final output has not acquired a bend.
 
-Activation functions are inserted between layers to change that relationship. Each hidden unit first calculates a pre-activation. The activation then decides how that value is passed forward. ReLU, for example, keeps positive values and replaces negative values with zero. Different units cross zero at different input values, so the network can follow different affine rules in different regions of the input space.
+An activation is inserted between layers to change that relationship. Each unit first calculates its pre-activation. ReLU keeps a positive value and replaces a negative value with zero. As the input changes, different units cross zero at different points. The network can therefore follow different straight segments in different regions.
 
 ```{python}
 #| label: fig-nonlinearity-intuition
@@ -77,19 +67,21 @@ plt.tight_layout()
 plt.show()
 ```
 
-The left panel has one slope across the full input range. The right panel uses three regions. For inputs below $-0.5$, both ReLU units are inactive and the output is zero. Between $-0.5$ and $0.5$, the first unit is active and the output rises. Above $0.5$, both are active and their slopes cancel, leaving an output of two. The activation has not made the network arbitrary; it has allowed the network to join several simple rules.
+The left panel has one slope across the full input range. The right panel has three regions. Below $-0.5$, both ReLU units return zero. Between $-0.5$ and $0.5$, one unit is active and the output rises. Above $0.5$, both are active and their slopes cancel, leaving an output of two. The network is still made from simple calculations, but the activation lets them join into a bent relationship.
+
+::: {.concept-box .concept-core #concept-activation-function data-term="Activation function" data-domain="Foundations"}
+**Activation function.** A fixed rule applied to a layer's pre-activation values before they are passed on. It changes the shape of the relationship the full network can represent; ReLU, for example, replaces negative values with zero.
+:::
 
 ### An activation acts on values, not on substantive meaning
 
 In a dense hidden layer, the same activation function is normally applied to every coordinate. If $z=(2,1.5,-1.5)$, ReLU processes the three numbers independently and returns $(2,1.5,0)$. It does not know that one coordinate may describe distance or that another may represent prior participation. The weights create the pre-activations; the activation applies a fixed numerical rule.
 
-### Nonlinearity and probability are different jobs
+### Hidden activations and output transformations
 
-An activation between hidden layers expands what the network can represent. A transformation at the output often serves another purpose: sigmoid maps one score to a value between zero and one, while softmax converts several scores into values that sum to one. Those outputs may be used as probabilities when the model, loss, data, and calibration support that interpretation. Bounded output alone does not establish calibration.
+An activation between hidden layers changes what the network can represent. A transformation at the output can have another job: sigmoid maps one score to a value between zero and one, and softmax converts several scores into values that sum to one. The different output contracts are taken up when the book returns to prediction tasks.
 
-The main conclusion at this level is therefore specific: hidden activations prevent a deep network from collapsing into one affine map. The next level examines what several common activation rules do to individual values.
-
-The change in shape comes from a small local rule applied to every coordinate. The next level follows that rule for individual values and distinguishes a hidden-layer activation from an output transformation that may be interpreted as a probability.
+The main conclusion at this level is specific: hidden activations prevent a deep network from collapsing into one affine map. The next level follows ReLU through the running vector.
 
 ## Level 2 - Mechanics
 
@@ -110,6 +102,10 @@ $$
 $$
 
 The third unit is not removed from the network. Its output is zero for this observation. The same unit may be active for another observation whose pre-activation is positive.
+
+## Level 3 - Mathematics & Code
+
+The running vector established the elementwise operation. This level compares several activation rules, relates them to the gradients introduced in Chapter 4, and then writes out why the activation stops stacked layers from collapsing into one affine function.
 
 ### Common activations transform the same input differently
 
@@ -219,12 +215,6 @@ The two panels describe the same mask. Unit 3 is inactive in the forward pass an
 ### Activation choice depends on where the function is used
 
 ReLU and GELU are common hidden activations because their positive side does not approach a fixed upper bound. Sigmoid is useful when a scalar output must lie between zero and one, and it also appears inside gates. Tanh remains useful where a bounded, zero-centred state is wanted. Softmax is usually applied across a vector of output scores, rather than independently to each coordinate. No single activation has the same role in every location.
-
-Mechanically, an activation changes values and local slopes. Level 3 makes these claims algebraic and verifies them in code.
-
-The forward calculation shows where a bend enters the network. The mathematical treatment below then shows the related issue for learning: each activation also has a local derivative that shapes the gradient passed backwards.
-
-## Level 3 - Mathematics & Code
 
 ### Two affine layers collapse into one
 
