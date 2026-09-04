@@ -3,32 +3,17 @@ title: "Vectors, Tensors, and Representations"
 subtitle: "Giving numerical arrays a computational and semantic structure"
 ---
 
-## Chapter orientation
+## The problem
 
-### Why this chapter matters
+Parts I and II defined models, gradients, updates, and the systems that execute them. Every one of those operations acts on numerical arrays. The values alone do not identify what an axis means, which entries belong to one observation, or whether two coordinates can be compared. Those meanings come from the representation and the operations that produce it.
 
-Neural networks operate on numerical arrays. The numbers alone do not identify what an axis means, which values belong to one observation, or whether two coordinates can be compared. Those meanings come from the representation and the operations that produce it.
+This chapter begins Part III by making those array contracts explicit before the book turns to embeddings and sequences. It separates rank from vector dimension, attaches a meaning to each axis, and follows how transformations preserve or discard distinctions. A tensor can have a valid shape while carrying the wrong semantics for the operation applied to it.
 
-Earlier chapters used vectors, matrices, and higher-dimensional tensors to explain layers, batches, normalisation, and training systems. This chapter consolidates those objects before the book turns to embeddings and sequences. It distinguishes mathematical dimension from tensor rank, follows the contracts attached to each axis, and shows how a model transforms one representation into another.
-
-### Learning objectives
-
-By the end of this chapter, you should be able to:
-
-- distinguish scalars, vectors, matrices, and higher-order tensors;
-- interpret a tensor shape as a set of named axes rather than a tuple of sizes;
-- index, slice, reshape, transpose, broadcast, and reduce arrays without losing their intended meaning;
-- write the shape and index equations for a batched sequence transformation;
-- explain why reshaping and permuting can preserve values while changing their interpretation;
-- distinguish a tensor from the representation carried by that tensor;
-- explain how a change of coordinates can preserve information but alter individual values;
-- distinguish invariance from equivariance;
-- identify information loss, padding errors, layout costs, and misleading representation comparisons;
-- specify a representation audit for a model or data pipeline.
-
-### Running tensor
+### A tensor with named axes
 
 The chapter uses a constructed batch containing two sequences, four positions per sequence, and three measured features per position. Its shape is therefore $2\times4\times3$, written more generally as $B\times S\times D$ for batch, sequence position, and feature dimension.
+
+The first diagram only counts axes. It does not establish the meaning of any axis, which is why the next examples name them. Keep that distinction in view throughout the chapter: shape provides a computational interface; the representation contract tells the operation what the stored positions stand for.
 
 ```{python}
 #| label: fig-tensor-ranks
@@ -128,7 +113,7 @@ The representation changes even when the source object does not. A six-value hid
 
 A shape error stops an incompatible operation, such as multiplying matrices whose inner dimensions do not match. A meaning error can preserve every expected shape. Swapping batch and sequence axes in a tensor of shape $32\times32\times768$ changes no tuple of sizes, yet it changes which positions a later operation combines. Assertions about named axes and small perturbation tests are therefore needed alongside shape checks.
 
-Level 1 has separated stored values, axis meaning, and representation. Level 2 follows the operations that select or reorganise those values.
+The next operations can preserve every stored number while changing which entries are treated as neighbours, features, positions, or observations. Level 2 follows indexing, permutation, reshaping, broadcasting, reduction, and masking as changes to an explicit axis contract.
 
 ## Level 2 - Mechanics
 
@@ -215,7 +200,7 @@ plt.tight_layout(); plt.show()
 
 If the padding value is zero, an unmasked mean divides by too many positions and shrinks shorter sequences. If zero is also a legitimate value, the tensor cannot reveal which zeros are padding. The mask or lengths must travel with the representation.
 
-Level 2 has treated tensor manipulation as an axis contract. Level 3 writes that contract in index notation and verifies it in NumPy and PyTorch.
+The axis contract can now be stated as index ranges and tested in code. Level 3 distinguishes invertible coordinate changes from transformations that discard distinctions, then checks the implemented shape and layout.
 
 ## Level 3 - Mathematics & Code
 

@@ -3,29 +3,13 @@ title: "Optimisers and Learning-rate Schedules"
 subtitle: "Turning gradients into a sequence of parameter updates"
 ---
 
-## Chapter orientation
+## The problem
 
-### Why this chapter matters
+Chapter 12 described how gradients can remain usable as activations change through a network. A usable gradient still does not specify the next parameter value. A mini-batch gradient is noisy, coordinates can have very different scales, and the update scale that is tolerable at the start of training may be wasteful or unstable later. An optimiser specifies how a sequence of gradients becomes a sequence of parameter changes.
 
-Chapter 3 established the basic update $\theta_{t+1}=\theta_t-\eta g_t$. That equation leaves several practical decisions unresolved. A mini-batch gradient is noisy. Different parameters can receive gradients on very different scales. One learning rate rarely works equally well at the beginning and end of training. Regularisation may be embedded in the gradient or applied as a separate parameter shrinkage. An optimiser specifies how these decisions are made over a sequence of steps.
+Optimisers transform gradients; they do not replace them. Momentum retains a direction from earlier updates. Adam combines moving averages of gradients and squared gradients. AdamW applies weight decay outside that adaptive transformation. A learning-rate schedule changes the overall update scale against an explicit training clock. The next result depends on the optimiser state as well as the current parameters and gradient.
 
-Optimisers do not replace gradients. They transform current and past gradients into an update. Momentum accumulates a direction over time. Adam combines a moving average of gradients with a moving average of squared gradients. AdamW separates weight decay from that adaptive transformation. A learning-rate schedule changes the overall update scale as training progresses. The resulting path depends on the complete state of the optimiser, not only on the current parameter and gradient.
-
-### Learning objectives
-
-By the end of this chapter, you should be able to:
-
-- distinguish a gradient from the update produced by an optimiser;
-- explain how momentum filters noisy gradients and accelerates motion in persistent directions;
-- calculate SGD with momentum and Adam updates, including Adam's bias correction;
-- explain how adaptive second-moment estimates create coordinate-specific effective step sizes;
-- distinguish L2 regularisation from decoupled weight decay under adaptive optimisation;
-- interpret warm-up, constant, step, exponential, and cosine learning-rate schedules;
-- connect schedule units to batches, epochs, gradient accumulation, and distributed training;
-- identify the optimiser state required for an exact training restart;
-- design an audit that separates optimisation failure from implementation failure.
-
-### Running loss surface
+### A loss with unequal directions
 
 The chapter repeatedly uses an elongated quadratic loss,
 
@@ -34,6 +18,8 @@ L(x,y)=\frac{1}{2}(x^2+20y^2).
 $$
 
 The surface is twenty times steeper in the $y$ direction than in the $x$ direction. One global learning rate must therefore make progress along a shallow direction without becoming unstable along a steep one. This simple geometry exposes why update history and coordinate scaling can matter.
+
+The figure starts every method at the same point and gives each the exact gradient of the same loss. Follow the paths across the narrow contours: their differences come from how each rule retains history and scales coordinates. The displayed settings make those mechanisms visible; they do not establish a general ranking.
 
 ```{python}
 #| label: fig-optimiser-paths
@@ -143,7 +129,7 @@ Adaptive scaling does not remove the learning rate. It creates an effective lear
 
 Large updates can make rapid progress when parameters are far from a useful solution. Smaller updates allow more precise movement later. Warm-up starts below the target learning rate because early gradients and optimiser moments can be poorly calibrated. Decay reduces the rate as training progresses. A schedule encodes when those changes occur.
 
-Level 1 separates gradients, optimiser transformations, and schedules. Level 2 follows the state transitions that produce an update.
+The next task is to track the state retained between updates: velocity for momentum, two moments for Adam, and a schedule clock for the learning rate. Level 2 follows those transitions one update at a time.
 
 ## Level 2 - Mechanics
 
@@ -275,7 +261,7 @@ plt.tight_layout(); plt.show()
 
 Warm-up is visible only at the beginning. Step decay makes discrete changes; exponential and cosine schedules change continuously. Cosine decay reaches zero here because the horizon is known. A schedule should be documented by its formula, base and minimum rates, warm-up length, total horizon, and clock.
 
-Level 2 explains the state and sequence of each update. Level 3 derives the equations and maps them to framework code.
+The mechanisms are easiest to audit once their state variables and denominators are written down. Level 3 derives the update equations, then makes the corresponding framework calls and restart state explicit.
 
 ## Level 3 - Mathematics & Code
 

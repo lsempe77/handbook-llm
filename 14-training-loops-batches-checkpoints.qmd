@@ -3,29 +3,15 @@ title: "Training Loops, Batches, and Checkpoints"
 subtitle: "Managing data, updates, evaluation, and recovery"
 ---
 
-## Chapter orientation
+## The problem
 
-### Why this chapter matters
+Chapter 13 defined the state transition inside an optimiser update. That transition only has a clear meaning if the surrounding loop specifies which observations contribute to it, when parameters change, when the model is evaluated, and what state survives an interruption. Two scripts can use the same architecture, loss, and optimiser but implement different learning procedures through their batch denominators, accumulation boundaries, mode changes, or checkpoint policy.
 
-A training loop defines which observations contribute to each gradient, when parameters change, which model state is evaluated, and what can be recovered after interruption. Two loops can use the same architecture, loss, and optimiser yet implement different learning procedures. One may average losses correctly across an incomplete final batch; another may give that batch the same weight as a full batch. One may update after every micro-batch; another may accumulate gradients. One may save the validation-selected model; another may save only the final weights.
+This chapter follows that surrounding state machine: loading data, batching, accumulation, validation, logging, checkpoint selection, and restart. The purpose is to state the dependencies that make a reported result reproducible, not to add a longer training-script template.
 
-Chapter 8 assembled a small working loop. Chapter 13 explained the state transition inside an optimiser update. This chapter examines the surrounding state machine: data loading, batching, accumulation, mode changes, validation, logging, checkpoint selection, and restart. The objective is not a longer code listing. It is an account of what each operation means and which state determines the next result.
+### One update inside its lifecycle
 
-### Learning objectives
-
-By the end of this chapter, you should be able to:
-
-- distinguish an observation, mini-batch, micro-batch, accumulation window, update, and epoch;
-- order gradient clearing, forward computation, loss, backpropagation, clipping, optimiser update, and schedule update;
-- show when gradient accumulation is equivalent to one larger batch and when it is not;
-- calculate epoch losses and metrics with the correct observation weights;
-- separate training mode, evaluation mode, and gradient tracking;
-- explain why validation selects checkpoints while a test set estimates final performance;
-- specify checkpoint contents for inference, approximate continuation, or exact restart;
-- verify a restart by comparing the next update with an uninterrupted run;
-- identify how workers, distributed sampling, mixed precision, and failures alter loop behaviour.
-
-### The lifecycle of one update
+Read the diagram from left to right as a dependency order. Backward passes add to an accumulation window, whereas an optimiser update occurs only at its declared boundary. Validation and checkpointing run less often, but they refer to the parameter state produced by that boundary; treating them as independent side tasks loses the state that selected the reported model.
 
 ```{python}
 #| label: fig-update-lifecycle
@@ -110,7 +96,7 @@ Weights can be sufficient for inference when the architecture and preprocessing 
 
 An exact-restart claim can be tested. Run one step after saving, reload the saved state, repeat the same step, and compare the resulting parameters and state. Successful deserialisation alone does not establish that training resumes from the same point.
 
-Level 1 identifies the clocks and state boundaries. Level 2 follows the mechanics of data weighting, accumulation, evaluation, and saving.
+The loop must now preserve the correct denominator, update only at the accumulation boundary, and evaluate a state whose mode has been set deliberately. Level 2 follows those rules before turning them into functions and restart tests.
 
 ## Level 2 - Mechanics
 
@@ -241,7 +227,7 @@ plt.tight_layout(); plt.show()
 
 The values are constructed to illustrate retention policy rather than to report an empirical result. The best label depends on a declared validation rule. The latest label advances whenever a recoverable state is written. Archives are retained according to a separate schedule or milestone policy. One file may carry more than one label, as the epoch-60 checkpoint does here, but the labels should not be treated as synonyms. Repeatedly inspecting the test set to assign the best label would turn it into another validation set.
 
-Level 2 establishes the operational rules. Level 3 maps them to executable functions and a restart test.
+These rules are claims about state, not style preferences in a script. Level 3 writes a sample-weighted epoch, a separated evaluation phase, and a checkpoint whose contents can be tested by the next update it produces.
 
 ## Level 3 - Mathematics & Code
 
