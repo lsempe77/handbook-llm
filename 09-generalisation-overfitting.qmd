@@ -3,29 +3,13 @@ title: "Generalisation and Overfitting"
 subtitle: "From fitting observed data to performing on new cases"
 ---
 
-## Chapter orientation
+## The problem
 
-### Why this chapter matters
+Chapter 8 established that a network can reduce loss on the records used to update its parameters. That result does not answer the next practical question: whether the same procedure will work on records it has not seen. The held-out result inspected while training Chapter 8 is development evidence, because it influenced the judgement that training was successful; it is not an untouched final test.
 
-Chapter 8 trained a network until it classified a synthetic training set and a held-out set correctly. Because that held-out result was inspected throughout training, it functioned as validation evidence rather than as an untouched final test. The result also depended on a simple data-generating process, a favourable split, and a model suited to the pattern. In applied work, the training sample is finite, labels contain error, and future observations may differ from those used to fit the model.
+Generalisation is performance on observations outside fitting and model selection, for a stated target population and operating condition. Overfitting is a training improvement that depends on details of the sample that do not recur. Training loss therefore establishes what the optimisation procedure achieved on observed data, not what it will achieve later, elsewhere, or under a changed measurement process.
 
-Generalisation describes performance on observations not used to estimate or select the model. Overfitting occurs when a fitted model captures idiosyncrasies of the training sample that do not transfer to the target population. A low training loss is therefore evidence about optimisation on observed data. It is not, by itself, evidence about future performance.
-
-### Learning objectives
-
-By the end of this chapter, you should be able to:
-
-- distinguish training fit, held-out performance, and target-population performance;
-- identify underfitting and overfitting from fitted functions and error curves;
-- explain the separate roles of training, validation, and test data;
-- define empirical risk, population risk, and the generalisation gap;
-- describe bias and variance without treating them as fixed properties of an algorithm;
-- implement capacity and sample-size experiments in Python;
-- explain why one favourable split is uncertain evidence;
-- distinguish interpolation from generalisation;
-- explain how test-set reuse, contamination, and distribution shift weaken performance claims.
-
-### Running example
+### A controlled example
 
 The chapter uses a one-dimensional synthetic regression problem with known signal
 
@@ -34,6 +18,8 @@ f(x)=\sin(\pi x)+0.3x,
 $$
 
 and observations $y=f(x)+\varepsilon$, where $\varepsilon\sim\mathcal{N}(0,0.25^2)$. Training inputs are sampled from $[-1,1]$. The known function lets us separate approximation error from the noise in observed labels. No substantive interpretation is attached to $x$ or $y$.
+
+The first figure holds the observations fixed and changes only polynomial capacity. Read the dashed line as the signal that would recur under repeated sampling, and the coloured line as the fitted rule. The point is not that degree five is universally appropriate; it is that closer passage through observed points can move the fitted rule away from the recurring relation.
 
 ```{python}
 #| label: fig-capacity-fits
@@ -100,7 +86,7 @@ The estimate remains uncertain. A small test set can be unusually easy or hard. 
 
 A higher-capacity model can represent more functions. The degree-17 polynomial can represent the smoother degree-5 relationship as well as many oscillating alternatives. Capacity creates the possibility of fitting noise; it does not establish that a particular training algorithm will select the worst alternative. Data quantity, optimisation, architecture, and regularisation influence which fitted function is obtained.
 
-The practical conclusion at this level is limited: training performance must be compared with genuinely unseen data, and the comparison must match the population or conditions for which the model is claimed to work. Level 2 shows how the data and diagnostics are organised.
+The immediate task is therefore to preserve observations for different jobs and to compare errors without confusing model development with final assessment. Level 2 makes that workflow explicit, then uses capacity and sample-size curves to diagnose the gap.
 
 ## Level 2 - Mechanics
 
@@ -209,7 +195,7 @@ plt.tight_layout(); plt.show()
 
 The degree-1 model has persistent signal error because its straight line cannot reproduce the curve. The degree-15 model is unstable with very small samples, but its median error and dispersion fall as more observations constrain the fitted function. This example shows why capacity cannot be judged without sample size.
 
-Level 2 uses held-out errors as diagnostics. Level 3 defines the quantities those diagnostics estimate and decomposes their sampling behaviour.
+The curves describe realised errors from one set of samples. To say what they estimate, and why both the fitted model and its test score vary across samples, Level 3 defines empirical and population risk.
 
 ## Level 3 - Mathematics & Code
 

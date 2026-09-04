@@ -3,31 +3,17 @@ title: "Initialisation and Gradient Flow"
 subtitle: "Setting the scale before learning begins"
 ---
 
-## Chapter orientation
+## The problem
 
-### Why this chapter matters
+Regularisation affects which solutions are preferred once optimisation is under way. Before the first update, the network must still transmit different signals to different hidden units and return usable gradients to early layers. Identical initial values leave hidden units indistinguishable. A poor initial scale can make signals vanish across depth, or make activations and derivatives grow until learning is numerically unstable.
 
-Training begins before the first parameter update. Initial weights determine the scale and diversity of the signals produced by the untrained network. If those signals shrink across layers, later layers receive little information. If they grow, activations may saturate or overflow. Backpropagation traverses the same chain in reverse, so the initial scale also affects whether early layers receive usable gradients.
+Initialisation is not a shortcut to the final model. It establishes the conditions under which architecture, activation, normalisation, residual paths, optimiser, precision, and data begin to interact. The appropriate question is therefore empirical as well as algebraic: what signals and gradients does this implemented network actually produce at step zero?
 
-Initialisation does not determine the final model by itself. It sets the starting conditions for an interaction among architecture, activation, normalisation, residual connections, optimiser, precision, and data. This chapter isolates that starting point and shows how to diagnose it.
-
-### Learning objectives
-
-By the end of this chapter, you should be able to:
-
-- explain why identical initial values prevent hidden units from learning different features;
-- trace activation scale across a deep network before training;
-- explain vanishing and exploding gradients as products of local transformations;
-- derive Xavier and He variance rules under their stated assumptions;
-- distinguish fan-in, fan-out, and activation-specific gain;
-- implement and inspect initialisation in NumPy and PyTorch;
-- measure activation, saturation, and gradient statistics by layer;
-- explain why residual paths, normalisation, and numerical precision change the initialisation problem;
-- record sufficient evidence to diagnose an unstable start.
-
-### Running experiment
+### A diagnostic experiment
 
 The chapter repeatedly propagates a batch of independent, standard-normal inputs through 30 width-128 layers. The network is deliberately deeper than needed for a practical toy prediction task because changes in scale become visible. Biases start at zero and ReLU is applied after each matrix multiplication.
+
+The first chart tracks the standard deviation of the activation leaving each layer on a log scale. A roughly horizontal trajectory means that distinct inputs remain distinguishable at this diagnostic stage; a steep decline or rise signals an avoidable problem before any training data or optimiser setting has been blamed.
 
 ```{python}
 #| label: fig-initial-scale
@@ -99,7 +85,7 @@ One layer can shrink a signal without destroying it. Thirty layers can multiply 
 
 Backpropagation multiplies an arriving gradient by activation derivatives and weight matrices. ReLU blocks coordinates whose pre-activations are negative. Sigmoid and tanh transmit small derivatives when saturated. Weight scale then shrinks or amplifies what remains. A usable forward signal does not guarantee a usable backward signal, so both must be measured.
 
-Level 1 identifies diversity and scale as the starting requirements. Level 2 follows the mechanics across layers.
+The immediate checks are whether units begin differently and whether forward and backward quantities remain in a workable range. Level 2 traces the operations that change those quantities and turns them into a short dry-run diagnostic.
 
 ## Level 2 - Mechanics
 
@@ -147,6 +133,8 @@ The horizontal direction follows backpropagation from layer 30 towards layer 1. 
 ### Diagnostics should precede expensive training
 
 A dry forward and backward pass can record per-layer activation mean and standard deviation, zero or saturation fraction, gradient norm, and non-finite values. These checks distinguish a network that cannot transmit information at step zero from one that becomes unstable only after optimiser updates.
+
+The observed trajectories need a reference calculation: otherwise a named initialiser can be mistaken for a guarantee. Level 3 derives the variance rules and then connects their assumptions to the tensor operations used in code.
 
 ## Level 3 - Mathematics & Code
 

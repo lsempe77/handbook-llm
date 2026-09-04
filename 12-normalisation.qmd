@@ -3,30 +3,17 @@ title: "Normalisation"
 subtitle: "Choosing the values that define a reference scale"
 ---
 
-## Chapter orientation
+## The problem
 
-### Why this chapter matters
+Chapter 11 used initialisation to make the first forward and backward pass workable. During training, earlier parameter updates can still change the scale and offset reaching later layers. Those changes may be meaningful, but they can also make optimisation sensitive to parameter scale, numerical precision, or the composition of a mini-batch.
 
-The output of a layer can change its scale during training. One feature may produce values near $0.01$, another near $20$, and the scale reaching a later layer can drift as earlier parameters change. These differences do not necessarily contain useful information. They can make optimisation sensitive to parameter scale, numerical precision, and the composition of a mini-batch.
+Normalisation constructs a reference from selected values and expresses activations relative to it. Subtracting and dividing are straightforward. The substantive decision is which values may contribute to the reference. Batch normalisation shares statistics across observations; layer normalisation uses values within one observation or token; group normalisation uses channel groups; RMS normalisation rescales a vector without subtracting its mean. These choices create distinct information dependencies and distinct training--inference behaviour.
 
-Normalisation constructs a reference from selected values and expresses activations relative to it. The difficult part is not the subtraction or division. It is choosing **which values are allowed to define the reference**. Batch normalisation shares statistics across observations. Layer normalisation computes them within one observation or token. Group normalisation uses groups of channels. RMS normalisation rescales a vector without subtracting its mean. These choices create different dependencies and different train--inference behaviour.
-
-### Learning objectives
-
-By the end of this chapter, you should be able to:
-
-- explain normalisation as a choice of reference set rather than a generic rescaling step;
-- distinguish feature-wise batch statistics from observation-wise layer statistics;
-- trace centring, scaling, and the learned affine transformation;
-- calculate batch, layer, group, and RMS normalisation by hand and in code;
-- explain why batch normalisation behaves differently in training and evaluation modes;
-- identify how batch size, tensor layout, padding, and numerical precision affect implementation;
-- choose a method by examining the information dependencies it introduces;
-- audit normalisation behaviour using realised activation statistics.
-
-### Running example
+### A visible reference choice
 
 The chapter begins with a matrix containing five observations and four features. Its rows have different overall levels, while its columns have different scales. This makes the choice of normalisation axis visible.
+
+Read the three heatmaps by following a single value across panels. In the batch-normalised panel, its comparison group is the other entries in the same column. In the layer-normalised panel, its comparison group is the other entries in the same row. The transformed values differ because the question asked of them differs.
 
 ```{python}
 #| label: fig-normalisation-axes
@@ -121,7 +108,7 @@ plt.tight_layout(); plt.show()
 
 The standardised vector has mean zero and variance close to one. The final transformation no longer has those exact statistics because $γ=1.5$ and $β=0.8$. This is intentional. Normalisation provides a controlled reference frame; it does not force every layer to remain permanently standard normal.
 
-Level 1 establishes that the central design choice is the reference set. Level 2 follows the operation and its consequences step by step.
+Once the reference is specified, the implementation must calculate its statistics, decide when they are reused, and preserve the dependencies that choice implies. Level 2 follows these operations for batch, layer, group, and RMS normalisation.
 
 ## Level 2 - Mechanics
 
@@ -213,7 +200,7 @@ plt.tight_layout(); plt.show()
 
 Layer normalisation centres all eight features together. Group normalisation centres the first four and final four separately, so it removes differences between group means. RMS normalisation controls magnitude but keeps every positive component positive because it does not recenter the vector.
 
-Level 2 shows the operational differences. Level 3 expresses them as reduction axes and implements them directly.
+The operational differences are reduction choices over concrete tensor axes. Level 3 writes those reductions explicitly and uses code to verify the resulting shapes and dependencies.
 
 ## Level 3 - Mathematics & Code
 

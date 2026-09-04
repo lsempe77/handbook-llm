@@ -3,29 +3,13 @@ title: "Regularisation"
 subtitle: "Changing the learning problem to improve transfer"
 ---
 
-## Chapter orientation
+## The problem
 
-### Why this chapter matters
+Chapter 9 showed why a flexible fitted rule can follow sample-specific noise. Reducing the model's nominal capacity is one response, but it is not the only one. Regularisation changes the learning procedure so that, among available fits, some are preferred: a penalty can make large parameters costly; dropout can train changing subnetworks; augmentation can add transformations judged label-preserving; and early stopping can select an earlier checkpoint.
 
-Chapter 9 showed that a flexible model can reduce training error by following noise and sample-specific detail. Regularisation changes the learning procedure so that some fitting solutions are preferred over others. It may penalise parameter values, inject randomness, expand the training data through defensible transformations, or stop optimisation before the training objective reaches its minimum.
+None of these operations repairs an invalid label, a leaking split, or a population absent from the evaluation design. Each adds an assumption about the fitted solution, the data, or the optimisation path. The method and its strength must consequently be chosen using validation evidence and assessed against the intended transfer task.
 
-Regularisation does not repair an invalid label, a leaking split, or a deployment distribution absent from evaluation. It exchanges one set of assumptions for another. The appropriate method and strength must therefore be selected on validation data and assessed against the intended transfer task.
-
-### Learning objectives
-
-By the end of this chapter, you should be able to:
-
-- explain regularisation as a change to the learning procedure rather than a post-hoc repair;
-- calculate an L2-penalised objective and its gradient;
-- distinguish L1 and L2 penalties from optimiser-specific weight decay;
-- explain dropout in training and evaluation modes;
-- state the invariance assumption made by a data augmentation;
-- implement ridge regression and inspect a coefficient path;
-- implement weight decay, dropout, and early stopping in PyTorch;
-- explain why validation data are required to select regularisation strength;
-- connect regularisation choices to checkpointing, randomness, numerical precision, and distributed training.
-
-### Running example
+### A controlled example
 
 The chapter continues the noisy function from Chapter 9,
 
@@ -34,6 +18,8 @@ y=\sin(\pi x)+0.3x+\varepsilon,\qquad \varepsilon\sim\mathcal N(0,0.25^2),
 $$
 
 using a degree-15 polynomial. Rather than lowering the degree, ridge regularisation retains all polynomial terms and penalises large coefficients. This isolates the effect of regularisation from a change in the model's nominal feature set.
+
+The figure compares two rules with the same input features and polynomial degree. The coloured curve changes because the objective changes: the ridge fit is permitted to accept more error on the observed points when that avoids extreme coefficients. This is a preference about solutions, not a claim that smoothness is always correct.
 
 ```{python}
 #| label: fig-regularisation-intuition
@@ -113,7 +99,7 @@ The diagram prevents several category errors. Data augmentation changes the exam
 
 A smoother function may extrapolate less violently and still fail after a change in measurement or population. Augmentation can encode known transformations, but it cannot reliably invent an unobserved subgroup or outcome mechanism. Validation and test sets must retain the variation the model is expected to handle.
 
-Level 1 treats regularisation as a justified preference. Level 2 follows how four common methods alter the training procedure.
+The next step is to locate each preference in the training procedure: the data presented, the scalar objective, the active network, or the point chosen on an optimisation path. Level 2 follows those mechanisms separately because they require different checks.
 
 ## Level 2 - Mechanics
 
@@ -195,7 +181,7 @@ ax.legend(); plt.tight_layout(); plt.show()
 
 The selected epoch is itself a hyperparameter outcome. Repeatedly changing patience, smoothing, or metric after viewing the same validation curve can overfit validation feedback. Early-stopping rules and maximum training budget should be recorded [@prechelt1998].
 
-This chapter treats early stopping as a regularisation and model-selection decision. Chapter 14 separates the operational roles of best, latest, and archival checkpoints and explains what each must preserve.
+These mechanisms can be stated precisely as objectives, stochastic transformations, and selection rules. Level 3 derives the ridge objective and shows the corresponding implementation contracts; Chapter 14 later separates the operational roles of best, latest, and archival checkpoints.
 
 ## Level 3 - Mathematics & Code
 
