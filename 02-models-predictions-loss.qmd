@@ -3,27 +3,13 @@ title: "Models, Predictions, and Loss Functions"
 subtitle: "What a model computes and how error is measured"
 ---
 
-## Chapter orientation
+## The problem
 
-### Why this chapter matters: models and losses define the learning problem
+Chapter 1 established that a model can use recorded features to make a prediction for a new household. That leaves a practical difficulty. Several fitted rules may produce different predictions for the same households. A training procedure needs a consistent way to say which rule is better, and how much better.
 
-A model maps inputs to outputs. Its parameters determine the particular function used for prediction, while a loss function measures the discrepancy between predictions and observed targets. Together, the model and the loss define the learning problem: what the system can represent and what it is rewarded for getting right.
+This chapter follows one prediction from input to comparison with the recorded outcome. The chain is short: a model produces a prediction, the data supply a target, and a loss turns their discrepancy into a quantity that can be compared across candidate parameter values.
 
-These distinctions are easy to blur. A prediction is not an explanation, a loss is not a complete measure of real-world value, and a training score is not evidence that a fitted relationship will generalise. This chapter develops the distinctions before turning to the procedure used to change model parameters.
-
-### Learning objectives
-
-By the end of this chapter, you should be able to:
-
-- describe a model as a parameterised function;
-- distinguish parameters, hyperparameters, predictions, targets, and losses;
-- calculate predictions from linear and logistic models;
-- explain mean squared error and cross-entropy;
-- compare a model with simple baselines;
-- understand why the choice of loss affects what the model learns;
-- explain why a differentiable loss is useful for gradient-based training.
-
-### Running example: the four objects in a prediction problem
+### The running example: four objects that must not be confused
 
 For observation $i$, let $x_i$ denote the input features and $y_i$ the observed target. A model $f_\theta$ with parameters $\theta$ produces:
 
@@ -44,6 +30,8 @@ For a programme-uptake example, $x_i$ could contain distance, prior participatio
 :::
 
 ## Level 1 - Intuition
+
+Start with the visible relationship between a fitted line and the observations. The line gives a prediction at each input. The vertical gap from a recorded point is the error for that case. We need a way to combine such errors before a training procedure can choose between two candidate lines.
 
 ```{python}
 #| label: fig-model-intuition
@@ -112,6 +100,8 @@ plt.tight_layout(); plt.show()
 ```
 
 The figure does not identify the appropriate threshold. That choice requires a stated objective, evidence about error consequences, and sometimes constraints outside prediction quality. Chapter 1 introduced that deployment boundary; later chapters return to calibration and generalisation evidence.
+
+The distinction creates the next problem. One error is a property of one case; training must compare a whole set of errors produced by one parameter setting with the errors produced by another. That requires a loss over a batch.
 
 ## Level 2 - Mechanics
 
@@ -198,6 +188,8 @@ If $y_i=1$, the loss is $-\log(p_i)$: confident predictions near one receive low
 The training objective is calculated on the data used to fit parameters. Evaluation metrics are calculated on held-out data or in a deployment setting. The same loss can be reported in both places, but the interpretation differs. A low training loss shows that the model fitted the training examples. A low held-out loss provides evidence that the fitted relationship extends to new cases drawn from the evaluation population.
 
 Loss and metric can therefore coincide without being interchangeable. A binary classifier may train with cross-entropy, monitor held-out cross-entropy to assess probability quality, and also report recall at an operational threshold. Each quantity answers a different question. Replacing one with another because it produces a more favourable number changes the claim being made.
+
+The mechanics identify the job of the loss: reduce a batch of prediction errors to one quantity that can be compared across candidate models. The mathematics and code below make that reduction explicit for regression and classification.
 
 ## Level 3 - Mathematics & Code
 

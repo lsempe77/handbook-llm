@@ -3,25 +3,13 @@ title: "Backpropagation"
 subtitle: "How a network computes the gradients it needs to learn"
 ---
 
-## Chapter orientation
+## The problem
 
-### Why this chapter matters
+Gradient descent can update a parameter once it has that parameter's gradient. A neural network may have millions of parameters, each affecting the loss through a long sequence of operations. Calculating a separate derivative from scratch for every parameter would make training impractical.
 
-Gradient descent specifies how parameters should change once their gradients are known. Backpropagation computes those gradients efficiently by applying the chain rule through the operations that produced the loss. Without this procedure, training a neural network one parameter at a time would be prohibitively expensive.
+Backpropagation reuses the computations that produced the loss. It first records a forward calculation, then moves backwards through that calculation, passing a local sensitivity from each operation to the values that produced it.
 
-### Learning objectives
-
-By the end of this chapter, you should be able to:
-
-- distinguish a forward pass from a backward pass;
-- interpret a computation graph;
-- apply the chain rule to a small network;
-- explain why backpropagation reuses intermediate values;
-- compare analytical, finite-difference, and automatic derivatives;
-- inspect gradients in PyTorch;
-- explain activation memory and gradient checkpointing.
-
-### Running example
+### The running example
 
 We will use a three-operation computation:
 
@@ -36,6 +24,8 @@ It is small enough to calculate by hand, but it contains the same structure as a
 :::
 
 ## Level 1 - Intuition
+
+The figure separates two jobs that are often collapsed into “training”. The upper row computes a prediction and then a loss. The lower row answers a different question: how would a small change in an earlier value alter that final loss? Follow the upper row first; the backward arrows will then have something concrete to refer to.
 
 ```{python}
 #| label: fig-forward-backward-intuition
@@ -80,6 +70,8 @@ This is an attribution of mathematical sensitivity, not a causal explanation of 
 Suppose a production process applies three transformations to an input. The final quality score is poor. To improve the process, we need to trace the score backwards through the transformations and determine which adjustable settings affected it.
 
 The analogy is useful only up to a point. A neural network does not assign moral or substantive responsibility to a neuron. It computes derivatives using local rules. The value of backpropagation lies in the efficiency of this calculation.
+
+The forward pass has supplied the values at each operation. The remaining task is to reuse those values to calculate a gradient for every earlier adjustable quantity, without repeating the entire computation once per parameter.
 
 ## Level 2 - Mechanics
 
@@ -137,6 +129,8 @@ Working backwards does not reconstruct the original input or target. The procedu
 ### Gradients and updates are separate
 
 Backpropagation computes a gradient. An optimiser uses that gradient to update parameters. In PyTorch, `loss.backward()` and `optimizer.step()` therefore perform different operations. Confusing them makes it difficult to diagnose training failures.
+
+The mechanics show the order of the calculation. The chain rule below supplies the rule that makes this order reusable: each operation transforms an incoming sensitivity using its own local derivative.
 
 ## Level 3 - Mathematics & Code
 
@@ -398,7 +392,7 @@ Backpropagation applies the chain rule through a computation graph. The forward 
 
 ## Looking ahead
 
-The examples so far treated the model as a sequence of abstract operations. [Chapter 5](05-artificial-neuron.qmd) examines the smallest parameterised building block in that sequence: the artificial neuron.
+We can now distinguish the two operations behind ordinary neural-network training: backpropagation calculates gradients, and gradient descent uses them to update parameters. [Chapter 5](05-artificial-neuron.qmd) introduces the smallest parameterised building block to which those operations are applied: the artificial neuron.
 
 ## Further reading
 

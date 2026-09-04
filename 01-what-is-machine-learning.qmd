@@ -3,30 +3,9 @@ title: "What Is Machine Learning?"
 subtitle: "From examples to predictions"
 ---
 
-## Chapter orientation
+## The problem
 
-### Why this chapter matters
-
-Machine learning is often described as a system that “learns from data”. That phrase is useful, but incomplete. A machine-learning system does not learn in the human sense. It is given examples, a representation of those examples, an objective, and a procedure for changing its parameters. The result is a function that can produce outputs for new inputs.
-
-This chapter establishes the vocabulary needed for the rest of the book. It also introduces a discipline that will recur throughout: a model’s quality depends not only on its algorithm, but on the question, data, target, evaluation procedure, and setting in which its predictions will be used.
-
-### Learning objectives
-
-By the end of this chapter, you should be able to:
-
-- distinguish explicit rules from patterns estimated from data;
-- identify observations, features, labels, predictions, parameters, and hyperparameters;
-- describe training, validation, testing, and inference;
-- distinguish supervised, unsupervised, and generative learning settings;
-- calculate simple regression and classification metrics;
-- explain overfitting and generalisation;
-- identify data leakage and distribution shift;
-- distinguish a predictive question from a causal question.
-
-### Running example: programme uptake
-
-Suppose an organisation wants to estimate whether a household will take up a programme if it is offered. For each household, we might observe:
+An organisation wants to decide whom to contact about a programme. It has records from earlier outreach and wants an estimate, before making a new contact, of whether each household is likely to take up the offer. The records contain information that is available at that point:
 
 | Household | Age of respondent | Distance to service point | Prior participation | Took up programme? |
 |---|---:|---:|---:|---:|
@@ -34,35 +13,19 @@ Suppose an organisation wants to estimate whether a household will take up a pro
 | B | 58 | 18.4 km | 1 | 0 |
 | C | 37 | 5.8 km | 1 | 1 |
 
-The first three columns are **features**: inputs used to make a prediction. The final column is a **label**: the outcome we want to predict. A model may learn that distance, age, and previous participation are associated with uptake. It does not follow a rule written by an analyst; it estimates parameters from examples.
+The first three columns are **features**: inputs used to make a prediction. The final column is a **label**: the recorded outcome. The immediate task is modest. Given the first three columns for a new household, produce a useful estimate of the fourth.
 
-This example is deliberately limited. A prediction of uptake is not an estimate of whether offering the programme causes uptake. That distinction becomes important when we discuss causal inference and responsible deployment.
+The timing is part of the task. An application outcome may help predict a later administrative decision, but it cannot be used to choose whom to contact before an application exists. “Take-up” also needs a stated meaning: attending once, completing the programme, or remaining enrolled are different labels. These choices are made before an algorithm is chosen.
 
-### The prediction problem comes before the algorithm
-
-A prediction is defined by more than its label. We also need to specify when the prediction is made, for whom it is made, what information is available at that point, and what action may follow from it. “Will this household take up the programme?” is incomplete unless we say whether the prediction is made before contact, after an information session, or after an application has been submitted.
-
-This timing determines which features are legitimate. An application outcome may be highly predictive after an application has been processed, but it cannot be used to decide whom to contact before the application exists. A variable can therefore be statistically useful and operationally invalid at the same time.
-
-The target also needs a precise definition. “Take-up” might mean attending once, completing a programme, receiving a transfer, or remaining enrolled after six months. These outcomes are related but not interchangeable. Changing the label changes the problem the model is solving.
-
-### A model is a conditional statement
-
-In the running example, a prediction model estimates a relationship of the form:
-
-$$
-P(Y=1\mid X=x),
-$$
-
-the probability of observing uptake for cases with observed characteristics $x$. This is a conditional prediction, not a statement that changing one feature will change the outcome. The distinction is easy to lose because the same variables can appear in both predictive and causal analyses.
-
-For prediction, a feature is valuable when it improves out-of-sample forecasts. For causal analysis, a variable must be connected to a design and assumptions that identify a counterfactual comparison. A model can predict well while offering no credible estimate of what would happen if a programme were offered to a different household.
+The model will describe an association in records like these. It will not establish that changing distance, age, or previous participation would cause uptake to change. Prediction and causal explanation use some of the same variables, but answer different questions.
 
 ::: {.concept-box .concept-core #concept-machine-learning data-term="Machine learning" data-domain="Foundations"}
 **Machine learning.** A procedure that fits a parameterised mapping from inputs to outputs using examples and a stated objective. **Training** changes the fitted parameters; **inference** applies the resulting model to new inputs. A prediction can be useful without establishing that its inputs cause the outcome.
 :::
 
 ## Level 1 - Intuition
+
+The organisation could write a rule by hand: contact households within five kilometres, for example. A machine-learning model starts differently. It looks for a pattern in the earlier examples and applies that estimated pattern to a household whose outcome is not yet known. The first figure makes that move visible. The coloured points are recorded cases; the star is the new household.
 
 ```{python}
 #| label: fig-intuition-pattern
@@ -205,6 +168,8 @@ Both panels use the same illustrative observations. In the left panel, the analy
 ### Prediction is not understanding
 
 A model can produce useful predictions without possessing a human-like explanation of the world. It may exploit regularities that are stable enough in the data but accidental, unfair, or fragile outside that setting. This is why evaluation must ask more than “does the model fit the examples?” It must ask whether the predictions remain useful for the intended population and decision.
+
+The first explanation is sufficient to state the central idea: examples supply a pattern, and a model uses that pattern to make a prediction for a new case. The next question is what, exactly, the model receives and changes while it is being fitted.
 
 ## Level 2 - Mechanics
 
@@ -357,6 +322,8 @@ plt.show()
 **Generative learning** models how data are produced or represented so that it can generate, complete, or transform examples. Large language models are trained as generative models by predicting tokens, but they also use supervised and preference-based stages later in development.
 
 These categories describe the information available to the training procedure, not the full behaviour of a deployed system. A single language model may be pretrained with a self-supervised next-token objective, fine-tuned with labelled demonstrations, and evaluated with a verifier or human preference signal. The stages use different forms of supervision even when the model architecture remains similar.
+
+At this point, the reader should be able to name the objects in the prediction task and state when each is available. The formal notation below is only a compact way to write that same sequence: features enter a fitted rule, which produces a prediction that can be compared with the recorded label.
 
 ## Level 3 - Mathematics & Code
 
@@ -640,7 +607,7 @@ Machine learning estimates a mapping from inputs to outputs using examples, a mo
 
 ## Looking ahead
 
-Once a model produces predictions, the model's output must be distinguished from the observed target and the discrepancy between them must be measured. [Chapter 2](02-models-predictions-loss.qmd) develops models, predictions, targets, and loss functions. [Chapter 3](03-gradient-descent.qmd) then explains how model parameters can be changed systematically to reduce loss.
+The prediction task now has its basic objects, but it does not yet say how one fitted rule is judged against another. [Chapter 2](02-models-predictions-loss.qmd) follows a prediction to its target and defines the loss that measures their discrepancy.
 
 ## Further reading
 

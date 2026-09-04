@@ -3,27 +3,13 @@ title: "Gradient Descent"
 subtitle: "How models learn from being wrong"
 ---
 
-## Chapter orientation
+## The problem
 
-### Why this chapter matters
+Chapter 2 gave us a loss: one number that records how badly a particular parameter setting performs on observed cases. A loss alone does not tell the training procedure which parameter value to try next. Testing every possible setting is impossible for a model with many parameters.
 
-Most modern neural networks are trained through a repeated cycle of prediction, evaluation, and adjustment. The models may contain millions or billions of parameters, but the central procedure is concise: measure the loss, calculate how parameter changes would affect it, and take a controlled step in a direction expected to reduce it.
+Gradient descent solves this local search problem. It asks a narrower question at the current setting: if the parameter moved a little, which direction would reduce the loss? The chapter begins with one parameter so that every step can be checked by hand before the same logic is applied to a network.
 
-This chapter develops that idea from a physical analogy to the update rule used in software. We will use one small running example throughout: finding the value of a parameter that makes a simple prediction as accurate as possible.
-
-### Learning objectives
-
-By the end of this chapter, you should be able to:
-
-- explain the relationship between parameters, predictions, and loss;
-- interpret a loss curve and an optimisation path;
-- explain what a gradient tells us and why the update moves against it;
-- implement gradient descent with NumPy and PyTorch;
-- diagnose the effects of different learning rates;
-- distinguish batch gradient descent, stochastic gradient descent, and adaptive optimisers;
-- explain why optimisation becomes a systems problem for large language models.
-
-### Running example
+### The running example
 
 Suppose a model has one parameter, $w$, and its error is described by:
 
@@ -67,6 +53,8 @@ The curve is the **optimisation landscape**. Its horizontal position represents 
 :::
 
 ## Level 1 - Intuition
+
+Read the curve before reading the update rule. Its horizontal position is one possible value of the parameter; its height is the loss produced by that value. At the marked point, training does not need to know the full curve. It needs enough local information to choose a safer next position.
 
 ```{python}
 #| label: fig-intuitive-slope
@@ -113,6 +101,8 @@ If the ground slopes downward to your left, a huge leap to the left might carry 
 - A very large learning rate can cause the model to jump back and forth or diverge.
 
 The objective is not to move as quickly as possible at every moment. It is to make reliable progress toward a low-loss region.
+
+The downhill image now gives us an update strategy, but it still leaves two questions. How is the local slope calculated, and how far should the parameter move after it is known? The next level makes one update explicit.
 
 ## Level 2 - Mechanics
 
@@ -219,6 +209,8 @@ ax.set_title("A sequence of gradient-descent updates")
 plt.tight_layout()
 plt.show()
 ```
+
+The worked update identifies the two ingredients that must be calculated at every step: a local direction and a step size. The mathematics below gives that direction a precise name—the gradient—and shows why the update subtracts it.
 
 ## Level 3 - Mathematics & Code
 
