@@ -1,31 +1,19 @@
----
+﻿---
 title: "Full and Parameter-efficient Fine-tuning"
 subtitle: "Changing a model for a task while controlling memory, storage, and regressions"
 ---
 
-## Chapter orientation
+## The problem
 
-### Why this chapter matters
+The adaptation objectives in Chapters 29 and 30 both update a checkpoint, but neither said which parameters the update may touch. Full fine-tuning updates all trainable model parameters. That freedom has a price: gradients and optimiser state for every weight must fit in memory, every run produces a complete new checkpoint, and serving several task variants means storing several full models.
 
-Fine-tuning adapts a pretrained checkpoint to a declared task or response distribution. Full fine-tuning updates all trainable model parameters. Parameter-efficient fine-tuning (PEFT) freezes most base weights and trains a smaller set of added or selected parameters. The choice affects optimiser memory, checkpoint storage, deployment, multi-task serving, and the kinds of changes a run can represent.
+Parameter-efficient fine-tuning (PEFT) trades some of that freedom for control over cost. It freezes most base weights and trains a smaller set of added or selected parameters, so task-specific changes can be stored separately and different adaptations can load over one base model. The choice affects optimiser memory, checkpoint storage, deployment, multi-task serving, and the kinds of changes a run can represent. Neither method removes the need for data documentation or evaluation: a small adapter can overfit, encode an unsafe behaviour, or fail outside its tuning distribution, and a full update can improve a target task while degrading retained behaviours. This chapter gives the comparison and the implementation contracts required to make it interpretable.
 
-Neither method removes the need for data documentation or evaluation. A small adapter can overfit, encode an unsafe behaviour, or fail outside its tuning distribution. A full update can improve a target task while degrading retained behaviours. This chapter gives the comparison and the implementation contracts required to make it interpretable.
+### One linear layer makes the update visible
 
-### Learning objectives
+The running example is a linear layer with base weight $W$. LoRA learns a low-rank update $\Delta W = BA$ instead of a full-size change to $W$. The base weight remains frozen during training, and the update can be applied separately at inference or merged into a copy of the base weight.
 
-By the end of this chapter, you should be able to:
-
-- distinguish full fine-tuning, frozen-base adaptation, and inference-only prompting;
-- derive the parameter count of a low-rank update;
-- explain LoRA's update and merge operation;
-- compare weight, gradient, optimiser-state, and activation memory;
-- identify adapter/checkpoint compatibility requirements;
-- evaluate target gains and retained-task regressions; and
-- record an adaptation run so that it can be reproduced or served safely.
-
-### Running layer
-
-For a linear layer with base weight \(W\), LoRA learns a low-rank update \(\Delta W = BA\). The base weight remains frozen during training, and the update can be applied separately or merged into a copy of the base weight for inference.
+The first diagram contrasts the two methods on the same stack of layers. In the left panel every base layer is orange: all of them update. In the right panel the base layers stay blue and frozen, and only the small teal modules attached to them are trainable. Notice what the right panel hides: the frozen weights still participate in every forward computation, so freezing changes what is learned, not what is used.
 
 ```{python}
 #| label: fig-full-vs-peft
@@ -46,6 +34,8 @@ for ax,title,mode in zip(axes,["full fine-tuning","frozen base + PEFT"],["full",
     ax.text(.5,.94,"orange: updated" if mode=="full" else "blue: frozen; teal: updated",ha="center",color=grey,transform=ax.transAxes,fontsize=8)
 plt.tight_layout(); plt.show()
 ```
+
+That distinction governs the chapter. The trainable fraction can be a thousandth of the base, yet the base must still be stored, loaded, and executed, and the adapter means nothing apart from the exact base it was trained against.
 
 ::: {.concept-box .concept-core #concept-fine-tuning data-term="Fine-tuning and PEFT" data-domain="Large language models"}
 **Fine-tuning and parameter-efficient fine-tuning.** Fine-tuning updates a pretrained checkpoint for a declared task. Full fine-tuning updates selected base parameters; PEFT retains most base weights and trains a smaller update module.
@@ -78,11 +68,13 @@ adapter_metadata={"base":"checkpoint-v1","target_modules":["q_proj","v_proj"],"r
 print(adapter_metadata)
 ```
 
-## Level 2 - LoRA mechanics
+Level 1 framed adaptation as a choice of what to update and what to freeze. Level 2 makes the low-rank update concrete: its parameter count, its scaling, and the merge operation that prepares it for inference.
+
+## Level 2 - Mechanics
 
 ### Low-rank updates reduce trainable parameter count
 
-For a layer \(W\in\mathbb{R}^{d_{out}\times d_{in}}\), a full update contains \(d_{out}d_{in}\) parameters. A rank-\(r\) LoRA update uses \(A\in\mathbb{R}^{r\times d_{in}}\) and \(B\in\mathbb{R}^{d_{out}\times r}\), for \(r(d_{in}+d_{out})\) trainable parameters. The update is commonly scaled by a factor such as \(\alpha/r\) [@hu2021lora].
+For a layer $W\in\mathbb{R}^{d_{out}\times d_{in}}$, a full update contains $d_{out}d_{in}$ parameters. A rank-$r$ LoRA update uses $A\in\mathbb{R}^{r\times d_{in}}$ and $B\in\mathbb{R}^{d_{out}\times r}$, for $r(d_{in}+d_{out})$ trainable parameters. The update is commonly scaled by a factor such as $\alpha/r$ [@hu2021lora].
 
 ```{python}
 d_in,d_out,r=4096,4096,8
@@ -95,7 +87,7 @@ print("full parameters:",full,"LoRA parameters:",lora,"fraction:",lora/full)
 #| fig-cap: "A low-rank adapter represents a large weight update through two smaller matrices whose product has the base layer's shape."
 #| fig-alt: "A diagram shows an input dimension through a rank-eight bottleneck to an output dimension, with the product added to a frozen base matrix."
 fig,ax=plt.subplots(figsize=(9,3.3)); ax.axis("off")
-for x,w,label,c in [(.25,1.6,"frozen W\n[dout × din]",blue),(2.45,1.25,"A\n[r × din]",teal),(4.0,1.25,"B\n[dout × r]",teal),(5.65,1.6,"ΔW = BA",orange),(7.35,1.6,"W + ΔW",purple)]:
+for x,w,label,c in [(.25,1.6,"frozen W\n[dout Ã— din]",blue),(2.45,1.25,"A\n[r Ã— din]",teal),(4.0,1.25,"B\n[dout Ã— r]",teal),(5.65,1.6,"Î”W = BA",orange),(7.35,1.6,"W + Î”W",purple)]:
     ax.add_patch(Rectangle((x,1.25),w,.62,facecolor=c,edgecolor="white")); ax.text(x+w/2,1.56,label,ha="center",va="center",color="white")
 ax.text(4.4,.55,"The update is low rank; the effective layer still maps din to dout.",ha="center",color=grey); ax.set_xlim(0,9); ax.set_ylim(.2,2.3); plt.show()
 ```
@@ -104,7 +96,7 @@ The reduction is largest when rank is much smaller than layer widths. Targeting 
 
 ### Merge and unmerge are numerical operations
 
-At inference, an adapter can be applied as a separate branch or merged by forming \(W' = W + sBA\). Merging can reduce runtime overhead, but it creates a new effective weight tensor. Repeated merging, wrong scaling, mismatched dtype, or merging into the wrong base can produce irreversible errors unless the original base and adapter are retained.
+At inference, an adapter can be applied as a separate branch or merged by forming $W' = W + sBA$. Merging can reduce runtime overhead, but it creates a new effective weight tensor. Repeated merging, wrong scaling, mismatched dtype, or merging into the wrong base can produce irreversible errors unless the original base and adapter are retained.
 
 ```{python}
 np.random.seed(2)
@@ -116,7 +108,9 @@ assert np.allclose(separate,merged)
 print("separate and merged adapter outputs agree")
 ```
 
-## Level 3 - Resource and deployment accounting
+Level 2 derived the update and verified merge equivalence in arithmetic. Level 3 counts the resources: what training memory actually consists of when the base is frozen, and how module scope changes the trainable family.
+
+## Level 3 - Mathematics & Code
 
 ### Trainable parameters are not the whole memory account
 
@@ -138,16 +132,6 @@ for vals,name,c in zip([np.array([full[i],peft[i]]) for i in range(4)],categorie
 ax.set_ylabel("relative memory components"); ax.legend(); ax.set_title("Conceptual training-memory account"); plt.tight_layout(); plt.show()
 ```
 
-### Multi-adapter serving creates routing decisions
-
-Separate adapters can make several task variants cheaper to store than several full checkpoints. Serving still needs a policy for selecting the adapter, ensuring it is compatible with the request, batching requests that use different adapters, and preventing an adapter intended for one task or policy from being silently applied to another. An adapter identifier is part of the request and audit trace.
-
-```{python}
-routes={"legal-summary":"adapter-legal-v2","code-review":"adapter-code-v1"}
-request_task="code-review"
-print("selected adapter:",routes[request_task])
-```
-
 ### Parameter scope is a substantive design choice
 
 PEFT is a family of methods rather than one fixed architecture. An implementation may target attention projections, feed-forward layers, output heads, selected biases, or inserted adapter blocks. Each scope changes which transformations can adapt and how many new parameters are trained. The scope should be reported at the level of module names and layer coverage, not only as a total trainable-parameter count.
@@ -164,6 +148,20 @@ for i in range(4):
     ax.add_patch(Rectangle((3.05,y),.8,.45,facecolor=teal,edgecolor="white")); ax.text(3.45,y+.225,"attn",ha="center",va="center",color="white",fontsize=8)
     ax.add_patch(Rectangle((4.1,y),.8,.45,facecolor=orange,edgecolor="white")); ax.text(4.5,y+.225,"FFN",ha="center",va="center",color="white",fontsize=8)
 ax.text(3.95,.25,"Highlighted target modules define where adapter updates are attached.",ha="center",color=grey); ax.set_xlim(0,6); ax.set_ylim(.05,3.8); plt.show()
+```
+
+Level 3 counted the training memory and the trainable update family. Level 4 turns to the operational decisions: adapter routing, checkpoint recoverability, the interaction of data volume and update scope, and the evidence a method selection requires.
+
+## Level 4 - Research & Systems
+
+### Multi-adapter serving creates routing decisions
+
+Separate adapters can make several task variants cheaper to store than several full checkpoints. Serving still needs a policy for selecting the adapter, ensuring it is compatible with the request, batching requests that use different adapters, and preventing an adapter intended for one task or policy from being silently applied to another. An adapter identifier is part of the request and audit trace.
+
+```{python}
+routes={"legal-summary":"adapter-legal-v2","code-review":"adapter-code-v1"}
+request_task="code-review"
+print("selected adapter:",routes[request_task])
 ```
 
 ### Checkpoint organisation determines recoverability
@@ -186,8 +184,6 @@ Checkpoint selection should inspect learning curves and held-out behaviour acros
 history={"step_100":{"target":.58,"retained":.71},"step_500":{"target":.66,"retained":.69},"step_900":{"target":.65,"retained":.62}}
 for step,metrics in history.items(): print(step,metrics)
 ```
-
-## Level 4 - Audit and selection
 
 ### Choose an adaptation method against a declared constraint
 

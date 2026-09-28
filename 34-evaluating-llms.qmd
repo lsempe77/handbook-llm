@@ -1,31 +1,19 @@
----
+﻿---
 title: "Evaluating LLMs"
 subtitle: "Capability, reliability, contamination, and the limits of benchmark scores"
 ---
 
-## Chapter orientation
+## The problem
 
-### Why this chapter matters
+Part IV produced a family of systems: a base model trained on next tokens, checkpoints adapted with demonstrations and preferences, versions compressed for serving, and pipelines that construct context from an indexed corpus. Every stage presented itself as a set of choices. The remaining question is what any of these systems can be claimed to do. A benchmark score answers that question badly: the same model scores differently after a template change, a decoding change, an index update, a tool change, or a contaminated test item.
 
-An LLM evaluation produces evidence about a defined model or system under a defined input distribution, interface, scoring rule, and time. It does not produce a general scalar measure of intelligence, truthfulness, or fitness for every deployment. The same model can score differently after a template change, a decoding change, an index update, a tool change, or a contaminated test item.
+An evaluation produces evidence about a defined model or system under a defined input distribution, interface, scoring rule, and time. It does not produce a general scalar measure of intelligence, truthfulness, or fitness for every deployment. This chapter closes Part IV by treating evaluation as a design and measurement problem, connecting the earlier distinctions among token loss, instruction tuning, preference optimisation, inference, and retrieval. Part V then turns to reasoning models and the additional question of how to evaluate multi-step computation.
 
-This chapter closes Part IV by treating evaluation as a design and measurement problem. It connects the earlier distinctions among token loss, instruction tuning, preference optimisation, inference, and RAG. Part V then turns to reasoning models and the additional question of how to evaluate multi-step computation.
+### One frozen test makes the contract visible
 
-### Learning objectives
+The running test has labelled inputs, a fixed template, a checkpoint, a decoding policy, and an exact-match criterion. Changing any of these can change the reported score, which is the point: a score belongs to the whole arrangement, not to the model alone.
 
-By the end of this chapter, you should be able to:
-
-- distinguish a capability benchmark, a reliability test, a safety evaluation, and a system evaluation;
-- define the population, unit, interface, and scoring rule for an LLM evaluation;
-- calculate an accuracy estimate and a simple confidence interval;
-- explain contamination, prompt sensitivity, and benchmark overfitting;
-- separate model, retrieval, tool, and decoding failures in a system trace;
-- identify when aggregate scores conceal subgroup or task differences; and
-- specify an evaluation report that can be audited and reproduced.
-
-### Running evaluation
-
-The running test has labelled inputs, a fixed template, a checkpoint, a decoding policy, and an exact-match criterion. Changing any of these can change the reported score.
+The first diagram lays that arrangement out as a contract. Follow the boxes left to right: the checkpoint and its interface, the test items and labels, the decoding and tool configuration, the scoring rule, and finally the reported metric with its uncertainty. Notice that the metric box comes last â€” everything upstream is part of what the number means.
 
 ```{python}
 #| label: fig-evaluation-contract
@@ -41,6 +29,8 @@ for x,label,c in [(.25,"checkpoint +\ninterface",blue),(2.25,"test items\n+ labe
 for x in [1.68,3.68,5.68,7.68]: ax.add_patch(FancyArrowPatch((x,1.61),(x+.5,1.61),arrowstyle="-|>",color=grey,mutation_scale=11))
 ax.text(5,.55,"A score is conditional on the complete evaluation contract.",ha="center",color=grey); ax.set_xlim(0,9.8); ax.set_ylim(.2,2.3); plt.show()
 ```
+
+Read this way, a score is never a property of a model by itself. It is the output of a measurement procedure, and the rest of the chapter asks what each stage of that procedure must state for the number to mean something.
 
 ::: {.concept-box .concept-core #concept-llm-evaluation data-term="LLM evaluation" data-domain="Large language models"}
 **LLM evaluation.** Measurement of a stated system interface on a defined task population and scoring rule. A benchmark score is conditional evidence, shaped by the model, prompt, decoding policy, data provenance, and development history.
@@ -77,13 +67,17 @@ scores=[.72,.86,.61,.49]
 fig,ax=plt.subplots(figsize=(8,4)); ax.bar(names,scores,color=[grey,teal,orange,purple]); ax.set_ylim(0,1); ax.set_ylabel("score"); ax.set_title("Aggregate performance can hide task differences"); plt.tight_layout(); plt.show()
 ```
 
-## Level 2 - Measurement mechanics
+The overall score of 0.72 averages three very different slices: extraction at 0.86, multilingual at 0.61, and long-context at 0.49. A deployment dominated by the weak slice inherits the weak slice's performance, not the average.
+
+Level 1 bounded what a score can claim. Level 2 makes the measurement mechanics explicit: units and denominators, sampling uncertainty, and the prompt and scorer choices that are part of the treatment.
+
+## Level 2 - Mechanics
 
 ### The unit and denominator determine a metric
 
 An accuracy denominator can be questions, examples, claims, generated tokens, tool calls, or complete episodes. These choices are not interchangeable. A system that answers one question with five claims may be correct on some claims and not others. A RAG system may retrieve a relevant document but fail the final answer. The report should state the unit, inclusion rule, missing-data rule, and whether an item can receive partial credit.
 
-For binary accuracy over \(n\) independent labelled units, a simple standard-error approximation is \(\sqrt{\hat p(1-\hat p)/n}\). It is not sufficient for clustered, repeated, or adaptively sampled data, but it shows why a score from a small test set has substantial uncertainty.
+For binary accuracy over $n$ independent labelled units, a simple standard-error approximation is $\sqrt{\hat p(1-\hat p)/n}$. It is not sufficient for clustered, repeated, or adaptively sampled data, but it shows why a score from a small test set has substantial uncertainty.
 
 ```{python}
 p=.72; n=100
@@ -110,7 +104,11 @@ exact=[p==y for p,y in zip(predictions,labels)]
 print("exact-match score:",np.mean(exact),"errors:",[i for i,x in enumerate(exact) if not x])
 ```
 
-## Level 3 - Contamination and system boundaries
+The scorer is itself a component with error modes: this exact-match rule would reject a correct synonym, and a grader for open-ended answers needs its own validation.
+
+Level 2 defined the metric, its uncertainty, and the treatment. Level 3 examines two boundaries that change what a score means: contamination of test material into training data, and the component structure of a complete system.
+
+## Level 3 - Mathematics & Code
 
 ### Contamination changes the interpretation of benchmark performance
 
@@ -144,7 +142,11 @@ for i,(label,c) in enumerate([("input",blue),("retrieve / tools",teal),("context
 ax.text(4.9,.55,"Record stage outputs to locate failures rather than treating every error as a model error.",ha="center",color=grey); ax.set_xlim(0,10); ax.set_ylim(.2,2.3); plt.show()
 ```
 
-## Level 4 - Evaluation design and reporting
+A trace turns "the answer was wrong" into a located failure: in the running example, retrieval missed the relevant chunk and the validator passed an unsupported answer â€” neither is a generation error.
+
+Level 3 located failure inside the pipeline. Level 4 turns to evaluation design: building tests around decisions, reporting disaggregated evidence, and recognising that benchmark use itself changes what scores mean.
+
+## Level 4 - Research & Systems
 
 ### Build an evaluation around a decision
 

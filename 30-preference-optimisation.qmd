@@ -1,31 +1,19 @@
----
+﻿---
 title: "Preference Optimisation"
 subtitle: "Learning from comparisons between candidate responses"
 ---
 
-## Chapter orientation
+## The problem
 
-### Why this chapter matters
+Chapter 29 adapted a base model to reproduce demonstrated responses: one request, one target answer, loss on the assistant span. Many judgements cannot be written that way. For a prompt such as "summarise this report", two responses can both be grammatical and relevant, and the useful supervision is that one is clearer, more complete, or better supported than the other. A demonstration cannot express that comparison; it can only present one candidate as if it were the answer.
 
-Instruction tuning learns to reproduce a demonstrated response. Preference optimisation uses comparisons: for a shared prompt, one candidate response is marked preferred to another. The data therefore express a relative judgement, not a single token-level target. Training methods use those comparisons to change the probability assigned to preferred and rejected responses.
+Preference optimisation uses comparisons as the training signal: for a shared prompt, one candidate response is marked preferred to another. The data therefore express a relative judgement, not a single token-level target, and training methods use those comparisons to change the probability assigned to preferred and rejected responses. The comparison is only as broad as the judging procedure and the prompt distribution. A preferred response can still be false, incomplete, biased, unsafe in another setting, or preferred for a reason that is not documented. This chapter explains reward-model pipelines and direct preference methods, their data requirements, and their failure modes. Chapter 31 turns to parameter-efficient adaptation.
 
-The comparison is only as broad as the judging procedure and prompt distribution. A preferred response can still be false, incomplete, biased, unsafe in another setting, or preferred for a reason that is not documented. This chapter explains reward-model pipelines and direct preference methods, their data requirements, and their failure modes. Chapter 31 turns to parameter-efficient adaptation.
+### One judged pair makes the signal visible
 
-### Learning objectives
+The running example gives the same prompt two candidate answers. A judge prefers the chosen answer according to a stated criterion, and the dataset retains both candidates, the prompt, the criterion, and how the judgement was obtained.
 
-By the end of this chapter, you should be able to:
-
-- distinguish demonstrations, scalar ratings, and pairwise preferences;
-- define prompt, chosen response, rejected response, judge, and comparison policy;
-- explain the Bradley-Terry reward-model likelihood;
-- distinguish reward-model-plus-RL pipelines from direct preference optimisation;
-- calculate a toy pairwise preference probability;
-- identify preference-data quality, ambiguity, and reward-hacking risks; and
-- specify an evaluation and audit record for a preference-optimised model.
-
-### Running pair
-
-The same prompt receives two candidate answers. A judge prefers the chosen answer according to a stated criterion. The dataset should retain both candidates, the prompt, the criterion, and how the judgement was obtained.
+The first diagram shows the shape of every preference record. Follow the arrows: one prompt branches into a chosen and a rejected response, and both feed a single preference label. Notice what the diagram cannot show â€” why the judge preferred one candidate â€” which is why the criterion and the judging procedure belong in the data rather than in a footnote.
 
 ```{python}
 #| label: fig-preference-pair
@@ -43,6 +31,8 @@ for a,b in [((2.05,1.74),(3.05,2.55)),((2.05,1.74),(3.05,.95)),((5.25,2.55),(6.3
 ax.set_xlim(0,8.6); ax.set_ylim(.2,3.2); plt.show()
 ```
 
+The label is the smallest unit of this training signal, and it is relative: it ranks two candidates without saying how good either is, or how large the gap is. Everything that follows â€” reward models, direct objectives, audits â€” is machinery for using such rankings without over-reading them.
+
 ::: {.concept-box .concept-core #concept-preference-optimisation data-term="Preference optimisation" data-domain="Large language models"}
 **Preference optimisation.** Adaptation from comparisons between candidate responses to a shared prompt. It may use a reward model or a direct objective, but its claim remains tied to the judging process, candidate distribution, and reference policy.
 :::
@@ -51,7 +41,7 @@ ax.set_xlim(0,8.6); ax.set_ylim(.2,3.2); plt.show()
 
 ### Comparisons add a different kind of supervision
 
-For an instruction such as “summarise this report”, two responses can both be grammatical and relevant while one is judged clearer, more complete, or better supported. A pairwise label records that relative judgement. It does not require the preferred response to be perfect, and it does not state how large the difference is unless the data include that information.
+For an instruction such as â€œsummarise this reportâ€, two responses can both be grammatical and relevant while one is judged clearer, more complete, or better supported. A pairwise label records that relative judgement. It does not require the preferred response to be perfect, and it does not state how large the difference is unless the data include that information.
 
 Preference datasets can be created by people, expert judges, rule-based procedures, or model-based judges. The source matters because it defines what the label represents. A preference for a concise answer differs from a preference for a medically accurate answer; an aggregate label can conceal disagreement among judges or a criterion that favours stylistic features over evidence.
 
@@ -64,17 +54,19 @@ for key,value in pair.items(): print(key+":",value)
 
 Optimising against comparisons can make a model more likely to produce responses similar to those preferred in training. It cannot show that the judging distribution matches future users, that the preferred response is factually correct, or that a system is safe under tool use. A model can learn to exploit regularities in a reward signal: polished wording, disclaimers, or length may receive positive labels even when the answer is not useful.
 
-The relevant question is therefore specific: preferred by whom, for which prompts, under which instructions, using what information, and compared with what alternatives? Without this record, “aligned with preferences” has no operational meaning.
+The relevant question is therefore specific: preferred by whom, for which prompts, under which instructions, using what information, and compared with what alternatives? Without this record, â€œaligned with preferencesâ€ has no operational meaning.
 
-## Level 2 - Pairwise models
+Level 1 separated the comparison signal from the claims it cannot support. Level 2 makes the standard machinery explicit: how a reward model turns responses into scores, and the two training routes that consume those scores or skip them.
+
+## Level 2 - Mechanics
 
 ### A reward model turns responses into scores
 
-A reward model assigns a scalar \(r(x,y)\) to a prompt \(x\) and response \(y\). Under a Bradley-Terry model, the probability that chosen response \(y^+\) is preferred to rejected response \(y^-\) is
+A reward model assigns a scalar $r(x,y)$ to a prompt $x$ and response $y$. Under a Bradley-Terry model, the probability that chosen response $y^+$ is preferred to rejected response $y^-$ is
 
-\[
+$$
 P(y^+ \succ y^-\mid x)=\sigma(r(x,y^+)-r(x,y^-)).
-\]
+$$
 
 Training raises this probability for observed comparisons. Only score differences matter: adding the same constant to both rewards leaves the pairwise probability unchanged.
 
@@ -109,7 +101,11 @@ for x in [1.62,3.58,8.05]: ax.add_patch(FancyArrowPatch((x,1.56),(x+.5,1.56),arr
 ax.text(4.0,.55,"reward-model route",ha="center",color=orange); ax.text(8.1,.55,"direct-preference route",ha="center",color=purple); ax.set_xlim(0,10); ax.set_ylim(.2,2.3); plt.show()
 ```
 
-## Level 3 - Objective and data boundaries
+The upper route adds a learned reward between the labels and the policy; the lower route folds the comparison directly into the policy objective. Both consume the same pairs, and both remain tied to the reference behaviour they constrain.
+
+Level 2 defined the pairwise model and the two routes. Level 3 states the direct objective formally and examines the data boundaries that decide what a pair actually compares.
+
+## Level 3 - Mathematics & Code
 
 ### Direct preference objectives compare log probabilities
 
@@ -149,6 +145,10 @@ for a,b in [((1.7,1.64),(1.95,2.48)),((1.7,1.64),(1.95,.78)),((3.45,2.48),(4.95,
 ax.set_xlim(0,8.8); ax.set_ylim(.15,3); plt.show()
 ```
 
+Level 3 stated the direct objective and the data boundaries around judges and candidates. Level 4 examines the evidence side: regression checks, judge populations, reward hacking, and the record an audit requires.
+
+## Level 4 - Research & Systems
+
 ### Preference optimisation needs regression checks
 
 A preferred-response objective can change refusal behaviour, verbosity, calibration language, code style, and the probability of answers outside the labelled prompt categories. Model selection should include a fixed suite of target preferences and retained tasks, with the same template and decoding policy for the reference and tuned checkpoints. The comparison should state whether the evaluation judges are independent from the preference-data judges and whether test prompts were held out before candidate generation.
@@ -166,8 +166,6 @@ pair_types={"trivial malformed alternative":40,"format trade-off":35,"evidence t
 print(pair_types)
 print("A preference dataset should report how its pair types were sampled and judged.")
 ```
-
-## Level 4 - Audit and failure modes
 
 ### Reward hacking is an empirical failure mode
 

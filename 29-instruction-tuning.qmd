@@ -3,29 +3,17 @@ title: "Instruction Tuning"
 subtitle: "Supervised adaptation from continuation to instruction-following behaviour"
 ---
 
-## Chapter orientation
+## The problem
 
-### Why this chapter matters
+Chapters 25 to 28 produced a base model and its generation interface: a checkpoint trained to predict next tokens, served under a declared decoding policy. Such a model completes token sequences; it does not, by itself, answer requests. Given an instruction, it may complete the instruction, continue it, imitate an answer seen during pretraining, or produce an unrelated pattern, depending on the prompt and its pretraining distribution. Nothing in next-token training says that text formatted as a request deserves a response.
 
-A base language model predicts continuations of token sequences. It may complete an instruction, continue it, imitate an answer, or produce an unrelated pattern depending on the prompt and its pretraining distribution. Instruction tuning adapts the model on examples formatted as requests and preferred responses so that a defined interface more reliably produces the intended response style.
+Instruction tuning adapts the model on examples formatted as requests and preferred responses so that a defined interface more reliably produces the intended response style. The optimisation remains token prediction; what changes are the training examples, the target mask, the conversation template, and the evaluation task. This chapter explains that change without claiming that supervised demonstrations establish factuality, safety, or preference alignment. Chapter 30 examines preference optimisation; Chapter 31 examines full and parameter-efficient task adaptation.
 
-The optimisation remains token prediction, but the training examples, target mask, conversation template, and evaluation task change. This chapter explains that change without claiming that supervised demonstrations establish factuality, safety, or preference alignment. Chapter 30 examines preference optimisation; Chapter 31 examines full and parameter-efficient task adaptation.
-
-### Learning objectives
-
-By the end of this chapter, you should be able to:
-
-- distinguish base pretraining from supervised instruction tuning;
-- define instruction, context, response, template, and target tokens;
-- explain why loss is normally applied to response tokens rather than the user's request;
-- identify data quality, diversity, and split risks in demonstration datasets;
-- implement a target mask for a toy chat example;
-- describe catastrophic forgetting and regression evaluation; and
-- specify the metadata needed to reproduce an instruction-tuning run.
-
-### Running conversation
+### A role-marked conversation exposes the interface
 
 The running example has a system instruction, a user request, and an assistant response. The entire formatted conversation is input to a causal model, but only selected assistant tokens contribute to the supervised loss.
+
+The first diagram shows that split. Three coloured segments form one left-to-right token sequence: the system instruction and user request are context, and only the assistant response carries a loss target label. Notice that the model reads everything but is graded on one span; every mechanism in this chapter follows from that division.
 
 ```{python}
 #| label: fig-chat-template
@@ -43,6 +31,8 @@ for label,c,target in parts:
     ax.text(x+w/2,.87,"loss target" if target else "context only",ha="center",color=orange if target else grey,fontsize=9); x+=w+.25
 ax.text(4.6,.35,"Role markers and template tokens are part of the model input contract.",ha="center",color=grey); ax.set_xlim(0,9); ax.set_ylim(.1,2.2); plt.show()
 ```
+
+The role markers and separators between those segments are not decoration: they are tokens in the input sequence, and the model conditions on them. The rest of the chapter treats the template, the mask, and the demonstration data as three parts of one interface contract.
 
 ::: {.concept-box .concept-core #concept-instruction-tuning data-term="Instruction tuning" data-domain="Large language models"}
 **Instruction tuning.** Supervised adaptation that trains a model to produce target responses within a declared conversation format. The target mask determines which tokens receive loss, while the template determines the interface supplied at training and use.
@@ -82,7 +72,11 @@ for ax,(name,pieces) in zip(axes,rows):
 plt.tight_layout(); plt.show()
 ```
 
-## Level 2 - Supervised mechanics
+The two rows encode the same visible request differently. A checkpoint trained under template A receives an unfamiliar token sequence under template B even though nothing a reader would notice has changed; the template is therefore versioned together with the model.
+
+Level 1 established the demonstration convention and the template contract. Level 2 follows the supervised mechanics: which tokens carry loss, and which properties of the demonstration data decide what gets reinforced.
+
+## Level 2 - Mechanics
 
 ### Context tokens and target tokens have different roles
 
@@ -124,7 +118,9 @@ print("task counts:",examples)
 print("counts describe coverage only when task definitions and selection rules are documented")
 ```
 
-## Level 3 - Adaptation and regression
+Level 2 covered the target mask and the demonstration record. Level 3 works through the arithmetic of adaptation: what fine-tuning does to shared parameters, how multi-turn and tool spans extend the mask, and how response length biases the loss.
+
+## Level 3 - Mathematics & Code
 
 ### Fine-tuning changes shared parameters
 
@@ -147,6 +143,22 @@ roles=["system","user","assistant","tool","assistant"]
 supervise=np.array([False,False,True,False,True])
 print(list(zip(roles,supervise)))
 ```
+
+### The supervised objective has a length and balance policy
+
+Assistant-only masking is not sufficient to define a dataset loss. Long responses contribute more supervised tokens than short responses when loss is averaged over valid target tokens. A corpus with a few long explanations can therefore exert more gradient influence than a larger number of brief extraction examples. Sampling weights, example packing, maximum length, truncation, and the loss denominator should be chosen together and recorded.
+
+Truncation is particularly important in multi-turn data. Removing the beginning of a conversation can discard system instructions or the question that makes an assistant answer meaningful. Removing the end can cut the supervised answer and produce incomplete targets. A pipeline needs a declared rule and tests on representative long conversations, including tool results and retrieved context.
+
+```{python}
+examples={"short extraction":12,"long explanation":180,"tool conversation":95}
+total=sum(examples.values())
+for name,tokens in examples.items(): print(name,"supervised-token share",round(tokens/total,2))
+```
+
+Level 3 implemented the supervised objective: shared-parameter updates, mask boundaries for multi-turn and tool spans, and the length policy behind the loss denominator. Level 4 examines the surrounding evidence: mixture conflicts, what training loss can and cannot select for, where errors originate, and what a run record must preserve.
+
+## Level 4 - Research & Systems
 
 ### Dataset mixtures can create instruction conflicts
 
@@ -183,20 +195,6 @@ for step,(loss,target,retained) in checkpoints.items():
 An incorrect instruction-tuned output can arise from an ambiguous request, an incompatible template, truncated context, unsupported content in the demonstration data, a target-mask error, decoding choices, or a model distribution that fails despite correct inputs. An audit should retain the formatted token sequence, role boundaries, masked labels, selected output IDs, and evaluation rationale for representative failures. This makes it possible to repair the relevant component rather than adding examples blindly.
 
 For a system that uses tools or retrieved documents, source availability should be part of the error record. An answer can be stylistically compliant while failing to use a supplied source, or it can cite a source that was never available in the context. Instruction tuning alone does not establish grounding behaviour; the task interface and evaluation need to test it.
-
-### The supervised objective has a length and balance policy
-
-Assistant-only masking is not sufficient to define a dataset loss. Long responses contribute more supervised tokens than short responses when loss is averaged over valid target tokens. A corpus with a few long explanations can therefore exert more gradient influence than a larger number of brief extraction examples. Sampling weights, example packing, maximum length, truncation, and the loss denominator should be chosen together and recorded.
-
-Truncation is particularly important in multi-turn data. Removing the beginning of a conversation can discard system instructions or the question that makes an assistant answer meaningful. Removing the end can cut the supervised answer and produce incomplete targets. A pipeline needs a declared rule and tests on representative long conversations, including tool results and retrieved context.
-
-```{python}
-examples={"short extraction":12,"long explanation":180,"tool conversation":95}
-total=sum(examples.values())
-for name,tokens in examples.items(): print(name,"supervised-token share",round(tokens/total,2))
-```
-
-## Level 4 - Audit and interpretation
 
 ### Evaluate behaviour, not only response overlap
 

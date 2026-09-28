@@ -1,31 +1,19 @@
----
+﻿---
 title: "Retrieval-augmented Generation"
 subtitle: "Indexing evidence, constructing context, and evaluating the full pipeline"
 ---
 
-## Chapter orientation
+## The problem
 
-### Why this chapter matters
+A deployed model answers from two things: its parameters and the prompt it receives. Chapters 29 to 32 adapted and compressed the parameters, but some questions cannot be answered from any fixed set of weights. Answers about documents created after pretraining, an organisation's own records, or claims that must point at a source need evidence that lives outside the model. Chapter 27 showed the context window is finite, so the evidence cannot simply all be placed in the prompt either.
 
-Retrieval-augmented generation (RAG) supplies a language model with selected external material at inference time. It can make current, private, or domain-specific information available without placing all of it in model weights. It also introduces a pipeline: documents are collected and versioned, split into chunks, indexed, retrieved for a query, placed in a prompt, and used by a generator.
+Retrieval-augmented generation (RAG) closes that gap with a pipeline: documents are collected and versioned, split into chunks, indexed, retrieved for a query, placed in a prompt, and used by a generator. The model reads selected external material at inference time instead of holding it in weights. The pipeline is also a chain of failure points. Relevant evidence may be absent from the corpus, split across chunks, missed by retrieval, removed by reranking or truncation, ignored by the model, or cited inaccurately, and evaluating only final answer quality cannot locate which of these occurred. This chapter treats RAG as a system with explicit information boundaries.
 
-An answer can fail at any stage. Relevant evidence may be absent from the corpus, split across chunks, missed by retrieval, removed by reranking or truncation, ignored by the model, or cited inaccurately. Evaluating only final answer quality cannot diagnose these causes. This chapter treats RAG as a system with explicit information boundaries.
+### Three chunks make the pipeline inspectable
 
-### Learning objectives
+The running collection has three short chunks. A query is embedded or represented for retrieval, and selected chunks are placed into a context template before answer generation. The small numbers keep every stage checkable by hand.
 
-By the end of this chapter, you should be able to:
-
-- distinguish a corpus, document, chunk, embedding, index, retriever, reranker, and generator;
-- explain dense and lexical retrieval at a conceptual level;
-- calculate simple retrieval recall for a labelled query set;
-- identify chunking, metadata, and context-budget choices as system decisions;
-- distinguish retrieval relevance, evidence use, citation accuracy, and final-answer correctness;
-- design a failure trace for a RAG answer; and
-- specify a versioned RAG evaluation record.
-
-### Running collection
-
-The running collection has three short chunks. A query is embedded or represented for retrieval; selected chunks are placed into a context template before answer generation.
+The first diagram shows the whole pipeline on one line. Follow it left to right: versioned documents become chunks with metadata, chunks become an index, a query retrieves and reranks candidates, and a bounded context reaches the generator. Notice the claim in the caption, which organises the rest of the chapter â€” the generator sees constructed context, not the complete indexed collection.
 
 ```{python}
 #| label: fig-rag-pipeline
@@ -41,6 +29,8 @@ for x,label,c in [(.2,"versioned\ndocuments",blue),(2.15,"chunks +\nmetadata",te
 for x in [1.58,3.53,5.43,7.33,9.28]: ax.add_patch(FancyArrowPatch((x,1.56),(x+.52,1.56),arrowstyle="-|>",color=grey,mutation_scale=11))
 ax.text(5.5,.55,"The generator sees constructed context, not the complete indexed collection.",ha="center",color=grey); ax.set_xlim(0,11.4); ax.set_ylim(.2,2.3); plt.show()
 ```
+
+Every stage between the document store and the answer is a decision somebody made: how to split, what to index, what to retrieve, what to keep within a budget. An unsupported answer is a trace through those decisions, not a verdict on the model alone.
 
 ::: {.concept-box .concept-core #concept-rag data-term="Retrieval-augmented generation" data-domain="Large language models"}
 **Retrieval-augmented generation.** A system that retrieves material from an indexed collection and supplies selected evidence to a generator. Its outcome depends on retrieval, context construction, generation, and source permissions rather than model weights alone.
@@ -77,7 +67,11 @@ for x,w,label,c in [(.6,2.8,"chunk 1",blue),(2.7,2.8,"chunk 2",teal),(4.8,2.8,"c
 ax.text(4.5,.55,"Overlap can preserve context across boundaries while increasing index size and repeated retrieval.",ha="center",color=grey); ax.set_xlim(0,9); ax.set_ylim(.2,2.3); plt.show()
 ```
 
-## Level 2 - Retrieval mechanics
+Overlap keeps a boundary sentence retrievable with its neighbours at a price: the same text is indexed twice, and both copies can occupy slots in a context budget.
+
+Level 1 established the knowledge boundary and the retrieval unit. Level 2 follows the matching signals â€” lexical and dense retrieval â€” and the budget arithmetic that decides which retrieved chunks actually reach the prompt.
+
+## Level 2 - Mechanics
 
 ### Lexical and dense retrieval use different matching signals
 
@@ -115,7 +109,11 @@ for length in chunk_lengths:
 print("chunk budget:",available,"selected lengths:",selected,"unused:",available-used)
 ```
 
-## Level 3 - Grounded generation
+The selection loop shows the budget as a hard constraint: a relevant chunk that does not fit is simply not seen by the model, and no later stage can recover it.
+
+Level 2 covered retrieval scoring and context allocation. Level 3 follows the evidence after it enters the prompt: grounding, citations, and the query-side transformations that alter the evidence path.
+
+## Level 3 - Mathematics & Code
 
 ### Retrieval relevance is not answer grounding
 
@@ -154,6 +152,10 @@ for x in [1.67,3.52,5.62,7.47]: ax.add_patch(FancyArrowPatch((x,1.56),(x+.28,1.5
 ax.text(5,.55,"Record transformations and candidate IDs, not only the final answer.",ha="center",color=grey); ax.set_xlim(0,9.5); ax.set_ylim(.2,2.3); plt.show()
 ```
 
+Level 3 traced evidence from retrieval through grounding, citations, and the query-side transformations. Level 4 examines the conditions and measurements around the pipeline: corpus quality and permissions, the relevance judgements behind retrieval metrics, stage-level evaluation, and the version records an index update requires.
+
+## Level 4 - Research & Systems
+
 ### Corpus quality and permission are upstream conditions
 
 Retrieval cannot correct a source that is out of date, internally inconsistent, wrongly parsed, or unavailable to the relevant user. Metadata should include provenance, update time, document type, ownership, access policy, and where possible an authoritative status. A retrieval score has no authority dimension unless the index and ranking policy encode and evaluate one.
@@ -177,18 +179,16 @@ For multi-hop questions, report whether every required evidence item was retriev
 
 When retrieval finds no sufficient evidence, a system can abstain, ask for clarification, state that the corpus does not establish an answer, or generate an unsupported response. The desired behaviour depends on the application, but it must be defined and evaluated. A retrieval score alone cannot decide whether evidence is sufficient for a claim.
 
-An abstention evaluation should include queries whose answer is absent, outdated, contradictory, or inaccessible under the requester's permissions. It should measure both unwarranted answers and unnecessary abstentions. This turns “do not hallucinate” into a measurable decision policy over known evidence conditions.
+An abstention evaluation should include queries whose answer is absent, outdated, contradictory, or inaccessible under the requester's permissions. It should measure both unwarranted answers and unnecessary abstentions. This turns â€œdo not hallucinateâ€ into a measurable decision policy over known evidence conditions.
 
 ```{python}
 cases=[{"evidence":"sufficient","action":"answer"},{"evidence":"absent","action":"abstain"},{"evidence":"restricted","action":"refuse access"}]
 for case in cases: print(case)
 ```
 
-## Level 4 - Evaluation and operations
-
 ### Evaluate the pipeline at its component boundaries
 
-For a labelled query set, retrieval recall at \(k\) asks whether at least one relevant chunk appears among the top \(k\). It does not measure whether the selected text was sufficient, whether it fitted in the context, or whether the answer used it correctly. Generation evaluation should add answer correctness, support or faithfulness, citation precision, abstention when evidence is missing, latency, and access-control compliance.
+For a labelled query set, retrieval recall at $k$ asks whether at least one relevant chunk appears among the top $k$. It does not measure whether the selected text was sufficient, whether it fitted in the context, or whether the answer used it correctly. Generation evaluation should add answer correctness, support or faithfulness, citation precision, abstention when evidence is missing, latency, and access-control compliance.
 
 ```{python}
 relevant={"q1":{"B"},"q2":{"C"},"q3":{"A"}}

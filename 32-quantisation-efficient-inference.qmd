@@ -1,31 +1,19 @@
----
+﻿---
 title: "Quantisation and Efficient Inference"
 subtitle: "Lower-precision representations, memory budgets, and accuracy checks"
 ---
 
-## Chapter orientation
+## The problem
 
-### Why this chapter matters
+Chapter 31 produced an adapted checkpoint: either a complete new model or a base model plus a small update module. Serving either one confronts a physical constraint. Inference requires the model weights, temporary computation, and the growing key-value cache from Chapter 27 to fit into available hardware memory. A seven-billion-parameter model at sixteen-bit precision needs about thirteen GiB for its weights alone, before any request arrives.
 
-Inference requires model weights, temporary computation, and often a key-value cache to fit in available hardware memory. Quantisation represents selected tensors with fewer bits than a higher-precision baseline. It can reduce storage, memory traffic, and sometimes latency, but it introduces approximation error and depends on hardware kernels, tensor formats, calibration choices, and serving configuration.
+Quantisation represents selected tensors with fewer bits than a higher-precision baseline. It can reduce storage, memory traffic, and sometimes latency, but it introduces approximation error, and its effect depends on hardware kernels, tensor formats, calibration choices, and serving configuration. Quantisation is not a single setting called "4-bit" or "8-bit": a valid description states which tensors are converted, group sizes and scales, activation and cache formats, compute precision, conversion method, and the evaluation used to detect degradation. This chapter develops that account before Chapter 33 turns to retrieval-augmented generation.
 
-Quantisation is not a single setting called “4-bit” or “8-bit”. A valid description states which tensors are converted, group sizes and scales, activation and cache formats, compute precision, conversion method, and the evaluation used to detect degradation. This chapter develops that account before Chapter 33 turns to retrieval-augmented generation.
-
-### Learning objectives
-
-By the end of this chapter, you should be able to:
-
-- distinguish storage precision, compute precision, and quantised tensor values;
-- calculate approximate weight-memory savings from bit width;
-- implement a toy affine quantiser and reconstruction error check;
-- explain per-tensor, per-channel, and groupwise scaling;
-- identify weights, activations, and key-value cache as separate quantisation targets;
-- state why hardware and kernels affect measured speed; and
-- specify a conversion and evaluation record for an efficient inference deployment.
-
-### Running vector
+### A three-value vector makes the trade visible
 
 The running vector is represented in floating point, mapped to a small integer range, and reconstructed using a scale. The reconstructed values are close to, but not equal to, the original values.
+
+The first diagram follows one three-value vector through the whole conversion. Read it left to right: floating-point weights become integer codes, and the codes become approximate floats again at reconstruction. Notice what the codes alone cannot recover â€” the original values, and the scale that maps codes back â€” which is why every quantised tensor ships with scaling metadata.
 
 ```{python}
 #| label: fig-quantisation-map
@@ -42,6 +30,8 @@ for x,label in [(2.3,"quantise"),(5.4,"dequantise")]: ax.add_patch(FancyArrowPat
 ax.set_xlim(0,8.8); ax.set_ylim(.4,2.3); plt.show()
 ```
 
+The reconstruction error in this toy case is small but real: `-0.8` returns as `-0.75` and `1.1` as `1.0`. A model contains billions of such values, so the question is never whether quantisation introduces error â€” it always does â€” but where the error falls, which tensors may be touched, and what evidence shows the served system still behaves.
+
 ::: {.concept-box .concept-core #concept-quantisation data-term="Quantisation" data-domain="Large language models"}
 **Quantisation.** A representation of values using fewer or different numerical levels to reduce memory or computation. Its effect must be assessed on the stored values, the execution path, and the task outcome.
 :::
@@ -52,7 +42,7 @@ ax.set_xlim(0,8.8); ax.set_ylim(.4,2.3); plt.show()
 
 A floating-point tensor stores values with a wide numerical range and finite precision. A quantised tensor stores codes from a smaller set, plus scales and sometimes zero points that map codes back to approximate values. Fewer bits reduce the raw weight footprint. They can also reduce data movement, which is frequently a practical bottleneck in generation. The conversion discards detail, so task behaviour must be checked after conversion.
 
-For a model with \(P\) weights, a simple storage estimate is \(P\times b/8\) bytes for \(b\)-bit values, before scales, metadata, packing overhead, and non-quantised tensors. This calculation is useful for capacity planning but is not a measured memory requirement.
+For a model with $P$ weights, a simple storage estimate is $P\times b/8$ bytes for $b$-bit values, before scales, metadata, packing overhead, and non-quantised tensors. This calculation is useful for capacity planning but is not a measured memory requirement.
 
 ```{python}
 parameters=7_000_000_000
@@ -69,11 +59,13 @@ fig,ax=plt.subplots(figsize=(7,4)); ax.bar(["16-bit","8-bit","4-bit"],gib,color=
 
 ### Precision names do not specify an inference system
 
-“4-bit model” may mean weights stored in four-bit codes while matrix multiplication accumulates in higher precision. It may leave embeddings, output layers, activations, or the key-value cache at another precision. Two deployments with the same advertised weight bit width can therefore have different memory use, latency, and output behaviour.
+â€œ4-bit modelâ€ may mean weights stored in four-bit codes while matrix multiplication accumulates in higher precision. It may leave embeddings, output layers, activations, or the key-value cache at another precision. Two deployments with the same advertised weight bit width can therefore have different memory use, latency, and output behaviour.
 
 Quantisation also does not automatically improve latency. A device and runtime need efficient kernels for the format and batch shape. Dequantisation, memory alignment, small batches, long context caches, and unsupported operations can eliminate an expected speed gain. Measure the target workload rather than inferring throughput from a format label.
 
-## Level 2 - Quantisation mechanics
+Level 1 separated the storage saving from the claims a format label cannot support. Level 2 builds the conversion itself: a simple affine quantiser, its reconstruction error, and the scaling choices that decide where that error falls.
+
+## Level 2 - Mechanics
 
 ### A simple affine quantiser
 
@@ -108,7 +100,9 @@ row_scales=np.max(np.abs(weights),axis=1)/7
 print("global scale:",round(global_scale,3),"row scales:",np.round(row_scales,3))
 ```
 
-## Level 3 - System-level effects
+Level 2 implemented one quantiser and its scaling options. Level 3 scales the accounting up: which inference tensors exist as separate conversion targets, and how conversion error propagates through a generation loop.
+
+## Level 3 - Mathematics & Code
 
 ### Weights, activations, and caches have different roles
 
@@ -123,16 +117,6 @@ fig,ax=plt.subplots(figsize=(8,4)); components=np.array([10,2,5]); ax.bar(["infe
 
 The relevant memory budget changes with prompt length, output length, concurrency, batch policy, and cache layout. A conversion that permits a checkpoint to load may still fail under long concurrent requests because the cache becomes dominant. Conversely, reducing cache precision can affect long-context outputs even when the weight-only conversion was accurate on short prompts.
 
-### Calibration and validation must follow conversion
-
-Post-training quantisation may use representative activations to choose scales or protect outlier channels. The calibration set should resemble the declared workload in language, length, formatting, and task type. Calibrating only short generic prompts then claiming a result for long code or multilingual documents leaves an untested gap.
-
-```{python}
-baseline=np.array([.62,.58,.71])
-quantised=np.array([.61,.57,.68])
-print("task deltas:",np.round(quantised-baseline,3))
-```
-
 ### Numerical error accumulates through a generation loop
 
 Quantisation does not perturb one isolated matrix multiplication. A generated token changes the next prefix, which changes attention keys, values, and later logits. Small differences can leave a short deterministic output unchanged or lead to a different token after a close decision, after which the two generations follow different prefixes. Output disagreement is therefore expected to be task- and decoding-dependent, not proof by itself that conversion failed.
@@ -146,6 +130,20 @@ print("max logit difference:",np.max(np.abs(baseline_logits-quantised_logits)))
 print("same greedy token:",baseline_logits.argmax()==quantised_logits.argmax())
 ```
 
+Level 3 identified the conversion targets and the way small numerical differences compound across decoding steps. Level 4 examines the deployment evidence: calibration sets, fallback policy, conversion records, and the tests that separate a loaded checkpoint from a validated one.
+
+## Level 4 - Research & Systems
+
+### Calibration and validation must follow conversion
+
+Post-training quantisation may use representative activations to choose scales or protect outlier channels. The calibration set should resemble the declared workload in language, length, formatting, and task type. Calibrating only short generic prompts then claiming a result for long code or multilingual documents leaves an untested gap.
+
+```{python}
+baseline=np.array([.62,.58,.71])
+quantised=np.array([.61,.57,.68])
+print("task deltas:",np.round(quantised-baseline,3))
+```
+
 ### Quantisation policy should include fallback behaviour
 
 Some deployments keep selected modules in higher precision because they are sensitive to a conversion method or because a runtime lacks a suitable kernel. Others route long-context or high-stakes requests to a higher-precision model. A fallback is not a defect, but it changes cost and comparability. The policy should state when it is triggered and report how often it occurs in the intended workload.
@@ -155,8 +153,6 @@ request={"prompt_tokens":12000,"task":"source-grounded answer"}
 route="higher precision" if request["prompt_tokens"]>8192 else "quantised"
 print("route:",route)
 ```
-
-## Level 4 - Audit and deployment
 
 ### A quantised checkpoint requires a conversion record
 
