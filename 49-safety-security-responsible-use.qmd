@@ -23,6 +23,7 @@ Misuse concerns what a user may ask the system to do. Security concerns an adver
 #| label: fig-risk-path
 #| fig-cap: "A responsible-use assessment links a user action and system capability to an affected asset, consequence, safeguard, and residual risk."
 #| fig-alt: "A flow diagram connects user action, model or tool behaviour, asset, consequence, safeguard, and review."
+import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 plt.style.use("seaborn-v0_8-whitegrid")

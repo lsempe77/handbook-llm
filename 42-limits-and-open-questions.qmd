@@ -54,6 +54,8 @@ for case in cases: print(case)
 #| fig-alt: "A policy update points to a high proxy score and separately to a task outcome that may differ."
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle, FancyArrowPatch
+
+blue, teal, orange, purple, grey = "#24527a", "#3a9188", "#d97745", "#7a5195", "#5f6b76"
 fig,ax=plt.subplots(figsize=(8,3)); ax.axis("off")
 for x,label,c in [(.4,"policy\nupdate","#24527a"),(2.7,"proxy score","#d97745"),(5.2,"task\noutcome","#3a9188")]: ax.add_patch(Rectangle((x,1.2),1.5,.6,facecolor=c,edgecolor="white")); ax.text(x+.75,1.5,label,ha="center",va="center",color="white")
 ax.add_patch(FancyArrowPatch((1.95,1.5),(2.65,1.5),arrowstyle="-|>")); ax.add_patch(FancyArrowPatch((4.25,1.5),(5.15,1.5),arrowstyle="-|>")); ax.text(4.3,.55,"Measure both; do not infer one from the other.",ha="center"); plt.show()
