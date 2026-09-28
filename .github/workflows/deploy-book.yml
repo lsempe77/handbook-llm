@@ -1,0 +1,87 @@
+name: Render and deploy book to sempe.dev
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "**.qmd"
+      - "_quarto.yml"
+      - "refs.bib"
+      - "requirements.txt"
+      - "styles.css"
+      - "book-navigation.css"
+      - "book-nav.html"
+      - ".github/workflows/deploy-book.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: book-deploy
+  cancel-in-progress: false
+
+jobs:
+  render-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout book source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: |
+          # CPU-only torch first: the PyPI wheel bundles CUDA and is several GB larger.
+          pip install torch==2.9.1 --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+
+      - name: Set up Quarto
+        uses: quarto-dev/quarto-actions/setup@v2
+
+      - name: Render book (HTML only)
+        run: quarto render --to html
+
+      - name: Verify figures were generated
+        run: |
+          # execute.error: false means failing cells omit figures silently
+          # (this is how chapters 42 and 49 once shipped without figures).
+          count=$(find _book -name "*.png" | wc -l)
+          echo "generated PNG figures: $count"
+          if [ "$count" -lt 250 ]; then
+            echo "expected at least 250 figures (September 2026 render produced 270); cells likely failed" >&2
+            find _book -name "*.png" | head -20 >&2
+            exit 1
+          fi
+
+      - name: Checkout site repository
+        uses: actions/checkout@v4
+        with:
+          repository: lsempe77/lsempe77.github.io
+          ref: main
+          token: ${{ secrets.SITE_REPO_TOKEN }}
+          path: site
+
+      - name: Publish rendered book into site repo
+        run: |
+          rm -rf site/public/books/ml
+          mkdir -p site/public/books/ml
+          cp -r _book/. site/public/books/ml/
+
+      - name: Commit and push site update
+        run: |
+          cd site
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/books/ml
+          if git diff --cached --quiet; then
+            echo "no changes to publish"
+          else
+            git commit -m "Update ML handbook render from handbook-llm@${GITHUB_SHA::7}"
+            git push
+          fi
