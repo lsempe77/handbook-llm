@@ -70,6 +70,7 @@ format:
     css:
       - styles.css
       - book-navigation.css
+    include-in-header: book-nav.html
     toc: true
     number-sections: false
     code-fold: true
