@@ -64,7 +64,7 @@ jobs:
         with:
           repository: lsempe77/lsempe77.github.io
           ref: main
-          token: ${{ secrets.SITE_REPO_TOKEN }}
+          token: ${{ secrets.HAND_LLM }}
           path: site
 
       - name: Publish rendered book into site repo
