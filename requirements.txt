@@ -1,0 +1,24 @@
+# Python dependencies for rendering the book.
+#
+# _quarto.yml sets `jupyter: python3`, so Quarto executes the code cells in every
+# chapter while building. Without these packages the chapters still render, but
+# their figures are silently omitted: `execute.error: false` means a failing cell
+# does not stop the build. That is how chapters 42 and 49 shipped without figures.
+#
+# Versions are those used for the render committed in September 2026, which
+# produced 51 pages and 270 figures.
+#
+#   python -m pip install -r requirements.txt
+#   quarto render --to html
+#
+# These are the only third-party modules imported anywhere in the book (the sixth
+# import, `math`, is part of the standard library).
+
+numpy==2.2.6
+matplotlib==3.11.0
+pandas==2.3.3
+scikit-learn==1.7.2
+torch==2.9.1
+
+# Jupyter is required for Quarto to execute the cells at all.
+jupyter==1.1.1
