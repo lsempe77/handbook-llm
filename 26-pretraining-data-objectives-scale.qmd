@@ -3,28 +3,17 @@ title: "Pretraining Data, Objectives, and Scale"
 subtitle: "What a base language model is trained to predict, and what the training run can support"
 ---
 
-## Chapter orientation
+## The problem
 
-### Why this chapter matters
+Chapter 25 defined the training objective: predict the next token from a permitted prefix and minimise the average negative log probability of the observed targets. The objective says nothing about which sequences enter training, how they are filtered and sampled, how many are processed, or how model capacity and compute are allocated. Those decisions determine the distribution a base model is fitted to and the evidence available for any claim about its behaviour.
 
-Next-token prediction defines a loss over token sequences. It does not define which sequences enter training, how they are filtered and sampled, how many are processed, or how model capacity and compute are allocated. Those decisions determine the distribution a base model is fitted to and the evidence available for claims about its behaviour.
+Pretraining trains a model on broad corpora under a self-supervised objective, and a base model learns the conditional regularities of that constructed stream. It does not independently verify text, acquire a stable instruction policy, or guarantee suitable completions. This chapter separates corpus construction, objective choice, scale, and reproducibility as distinct decisions, each with its own record. Chapter 29 turns to instruction tuning; Chapter 34 turns to evaluation.
 
-Pretraining trains a model on broad corpora using a self-supervised objective. A base model learns conditional regularities in that constructed stream. It does not independently verify text, acquire a stable instruction policy, or guarantee suitable completions. This chapter separates corpus construction, objective choice, scale, and reproducibility. Chapter 29 turns to instruction tuning; Chapter 34 turns to evaluation.
-
-### Learning objectives
-
-By the end of this chapter, you should be able to:
-
-- distinguish a corpus, sampled training stream, token budget, and optimisation run;
-- explain why provenance, filtering, deduplication, and mixture weights affect a base model;
-- compare causal, masked, and sequence-to-sequence pretraining objectives;
-- account for parameters, training tokens, batch size, steps, and compute;
-- interpret scaling-law findings under their measured conditions; and
-- specify a reproducible pretraining record.
-
-### Running example
+### A mixed training stream makes exposure visible
 
 Suppose a training stream mixes public web text, reference material, code, and curated multilingual material. Source size does not determine exposure: sampling weights and repetitions determine which tokens enter optimiser updates.
+
+The first diagram follows the path from sources to parameter updates. Read it left to right: four named sources feed a weighted sampler, the sampled documents pass through the tokenizer, and the resulting batches drive the loss and update loop. The sampled stream, not the source list, defines what the model actually sees.
 
 ```{python}
 #| label: fig-data-stream
@@ -38,11 +27,13 @@ blue,teal,orange,purple,grey="#24527a","#3a9188","#d97745","#7655a6","#5f6b76"
 fig,ax=plt.subplots(figsize=(10,3.6)); ax.axis("off")
 for i,(label,c) in enumerate([("web",blue),("reference",teal),("code",orange),("multilingual",purple)]):
     y=2.7-i*.55; ax.add_patch(Rectangle((.25,y),1.5,.35,facecolor=c,edgecolor="white")); ax.text(1,y+.175,label,ha="center",va="center",color="white"); ax.add_patch(FancyArrowPatch((1.78,y+.175),(2.45,1.6),arrowstyle="-|>",color=grey,mutation_scale=10))
-for x,label,c in [(2.55,"weighted\nsampler",grey),(4.55,"tokeniser",teal),(6.25,"batches",orange),(7.95,"model, loss,\nupdate",blue)]:
+for x,label,c in [(2.55,"weighted\nsampler",grey),(4.55,"tokenizer",teal),(6.25,"batches",orange),(7.95,"model, loss,\nupdate",blue)]:
     ax.add_patch(Rectangle((x,1.28),1.35,.65,facecolor=c,edgecolor="white")); ax.text(x+.675,1.6,label,ha="center",va="center",color="white",fontsize=9)
 for x in [3.95,5.85,7.55]: ax.add_patch(FancyArrowPatch((x,1.6),(x+.52,1.6),arrowstyle="-|>",color=grey,mutation_scale=10))
 ax.text(5.2,.55,"The sampled stream, not a source list alone, defines exposure during training.",ha="center",color=grey); ax.set_xlim(0,9.7); ax.set_ylim(.3,3.2); plt.show()
 ```
+
+A data card that lists only the four sources cannot answer what the model saw. The mixture weights, repetition policy, and tokenizer sit between the corpus and the gradient, and each is a documented choice rather than a background detail.
 
 ::: {.concept-box .concept-core #concept-pretraining data-term="Pretraining" data-domain="Large language models"}
 **Pretraining.** Training a base model on a large token stream under a stated prediction objective. Its claims depend on the corpus, data mixture, token budget, architecture, optimiser, and held-out evaluation record.
@@ -86,7 +77,11 @@ for ax,(name,pieces,cols) in zip(axes,rows):
 plt.tight_layout(); plt.show()
 ```
 
-## Level 2 - Data mechanics
+The three rows expose different context when predicting a target: causal prediction sees only the left of its position, masked prediction sees both sides of a hidden unit, and a sequence-to-sequence objective maps a corrupted source to a target. The choice among them belongs to the data contract; the three are not interchangeable descriptions of "learning language".
+
+Level 1 separated a constructed corpus from a collected one and contrasted the objective families. Level 2 follows the records and counts that make a training stream reproducible.
+
+## Level 2 - Mechanics
 
 ### A corpus record needs more than a headline token count
 
@@ -103,7 +98,7 @@ print("near duplicates require a declared similarity rule")
 
 ### Tokens, batches, steps, and epochs count different things
 
-If a run processes \(T\) valid tokens with global batch size \(B\) tokens, it performs about \(T/B\) optimiser updates, subject to packing and gradient accumulation. An epoch means one pass through a defined finite dataset; it becomes ambiguous when a mixture is resampled or repeated.
+If a run processes $T$ valid tokens with global batch size $B$ tokens, it performs about $T/B$ optimiser updates, subject to packing and gradient accumulation. An epoch means one pass through a defined finite dataset; it becomes ambiguous when a mixture is resampled or repeated.
 
 ```{python}
 training_tokens=300_000_000_000
@@ -114,7 +109,9 @@ print(f"optimiser steps: {steps:,.0f}")
 
 The token count depends on the tokenizer. A batch may be reported in sequences, examples, tokens, or tokens per device; these are not equivalent for variable lengths. A run record should give global valid tokens per update, maximum length, packing policy, accumulation steps, and total valid tokens processed.
 
-## Level 3 - Objectives and scale
+Level 2 identified the records a corpus and a batch schedule require. Level 3 states the objective and exposure calculations formally and implements them on small examples.
+
+## Level 3 - Mathematics & Code
 
 ### Objective choice determines the prediction task
 
@@ -128,20 +125,6 @@ weights=np.array([.5,.3,.2])
 print("unweighted mean:",losses.mean())
 print("weighted mixture loss:",(losses*weights).sum())
 ```
-
-### Scaling laws are fitted evidence, not a general capability law
-
-Scaling-law studies report regular relationships between held-out loss, parameter count, data, and training compute under specified training regimes [@kaplan2020scaling; @hoffmann2022training]. They inform planning inside those conditions. They do not establish that every capability, safety property, language, or benchmark will improve smoothly with size. Extrapolation depends on architecture, data, tokenisation, optimisation, and the range studied.
-
-```{python}
-#| label: fig-scaling-curve
-#| fig-cap: "A conceptual scaling curve shows diminishing held-out loss reductions as training compute rises; its fitted form applies only to its measured regime."
-#| fig-alt: "A downward curve plots illustrative validation loss against log training compute."
-compute=np.logspace(1,5,100); loss=1.0+2.2*compute**-.18
-fig,ax=plt.subplots(figsize=(7.5,4)); ax.plot(compute,loss,color=purple,lw=2.5); ax.set_xscale("log"); ax.set_xlabel("training compute (illustrative log scale)"); ax.set_ylabel("held-out loss (illustrative)"); ax.set_title("Diminishing loss reductions in a fitted regime"); plt.tight_layout(); plt.show()
-```
-
-Compute accounting needs more than parameters times tokens. Actual cost depends on sequence length, attention implementation, precision, communication, activation recomputation, failed runs, and hardware utilisation. Chapter 15 developed these systems distinctions. A pretraining report must connect them to data and objective budgets rather than provide a single uninterpretable compute headline.
 
 ### Data repetition changes the meaning of a token budget
 
@@ -159,6 +142,24 @@ for name,passes in zip(["web","reference","small curated"],exposure):
 ```
 
 The calculation uses a simplified fixed mixture. Real pipelines may sample documents, shards, or length-normalised examples; may replace exhausted sources; and may alter weights during a run. Those details belong in the training record because they define which losses contribute to parameter updates.
+
+Level 3 connected objectives and exposure to calculations that can be checked. Level 4 examines the fitted evidence for scaling, the validation boundary, and the language a base-model claim requires.
+
+## Level 4 - Research & Systems
+
+### Scaling laws are fitted evidence, not a general capability law
+
+Scaling-law studies report regular relationships between held-out loss, parameter count, data, and training compute under specified training regimes [@kaplan2020scaling; @hoffmann2022training]. They inform planning inside those conditions. They do not establish that every capability, safety property, language, or benchmark will improve smoothly with size. Extrapolation depends on architecture, data, tokenisation, optimisation, and the range studied.
+
+```{python}
+#| label: fig-scaling-curve
+#| fig-cap: "A conceptual scaling curve shows diminishing held-out loss reductions as training compute rises; its fitted form applies only to its measured regime."
+#| fig-alt: "A downward curve plots illustrative validation loss against log training compute."
+compute=np.logspace(1,5,100); loss=1.0+2.2*compute**-.18
+fig,ax=plt.subplots(figsize=(7.5,4)); ax.plot(compute,loss,color=purple,lw=2.5); ax.set_xscale("log"); ax.set_xlabel("training compute (illustrative log scale)"); ax.set_ylabel("held-out loss (illustrative)"); ax.set_title("Diminishing loss reductions in a fitted regime"); plt.tight_layout(); plt.show()
+```
+
+Compute accounting needs more than parameters times tokens. Actual cost depends on sequence length, attention implementation, precision, communication, activation recomputation, failed runs, and hardware utilisation. Chapter 15 developed these systems distinctions. A pretraining report must connect them to data and objective budgets rather than provide a single uninterpretable compute headline.
 
 ### Validation needs an information boundary of its own
 
@@ -193,8 +194,6 @@ for params,tokens in zip(parameter_counts,token_budgets):
 Pretraining can produce useful representations and conditional distributions across a wide range of text. It does not show that a system follows instructions, reports sources, abstains appropriately, protects private information, or remains reliable under a changed task distribution. Those behaviours require their own training, interface design, and evaluation. A report should therefore distinguish “the model was pretrained on” from “the deployed system was shown to do”.
 
 This distinction also prevents an opaque model scale claim from standing in for evidence. A model can be larger while having a narrower data mixture, a shorter context, a different objective, or less suitable evaluation. The relevant comparison begins with matched definitions and ends with tests that represent the intended use.
-
-## Level 4 - Audit and interpretation
 
 ### A pretraining claim requires a data and run record
 

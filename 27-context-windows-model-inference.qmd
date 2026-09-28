@@ -1,31 +1,19 @@
----
+﻿---
 title: "Context Windows and Model Inference"
 subtitle: "Finite prefixes, cached states, and the limits of long-context generation"
 ---
 
-## Chapter orientation
+## The problem
 
-### Why this chapter matters
+Chapter 26 produced a base-model checkpoint fitted to a constructed token stream under a finite training budget. Serving that checkpoint confronts a different constraint. A decoder language model predicts the next token from a finite permitted prefix, and the maximum number of tokens it can process in one request is the context window. That limit affects what evidence is available to a prediction, the memory required by attention, the latency of generation, and the interpretation of claims that a model has "read" a long document.
 
-A decoder language model predicts the next token from a finite permitted prefix. The maximum number of tokens it can process is the context window. This limit affects what evidence is available to a prediction, the memory required by attention, the latency of generation, and the interpretation of claims that a model has “read” a long document.
+Inference is also sequential: a generated token becomes part of the next prefix. Key-value caching avoids recomputing the representations of earlier tokens at every step, but it retains an expanding memory state. This chapter defines those mechanics and the evidence needed to assess long-context use. Chapter 28 treats how tokens are selected from the next-token distribution.
 
-Inference is also sequential. A generated token becomes part of the next prefix. Key-value caching avoids recomputing the representations of earlier tokens at every step, but it retains an expanding memory state. This chapter defines these mechanics and the evidence needed to assess long-context use. Chapter 28 treats how tokens are selected from the next-token distribution.
+### A sliding window makes the boundary visible
 
-### Learning objectives
+The running sequence uses a prompt of five token IDs and generates three new IDs. A maximum context of six means that a later prediction cannot retain every original prompt token if the system uses a sliding window.
 
-By the end of this chapter, you should be able to:
-
-- distinguish context length, generated length, and total sequence length;
-- explain why causal decoding is sequential even when prompt processing is parallel;
-- calculate the shape and approximate storage of a key-value cache;
-- compare full-prefix recomputation with cached decoding;
-- identify the difference between fitting text into a context and using relevant information from it;
-- state common long-context evaluation failures; and
-- specify an inference record that makes latency and length claims interpretable.
-
-### Running sequence
-
-We use a prompt of five token IDs and generate three new IDs. A maximum context of six means that a later prediction cannot retain every original prompt token if the system uses a sliding window.
+The first diagram shows the whole sequence and the retained window. The blue boxes are prompt tokens and the orange boxes are generated tokens; the outlined span is the six-token context available when the model predicts the final token. Notice that `p1` and `p2` have left the window: they influenced earlier predictions, but they are no longer available to this one.
 
 ```{python}
 #| label: fig-context-window
@@ -45,6 +33,8 @@ ax.add_patch(Rectangle((2.55,1.02),6.85,.95,fill=False,edgecolor=teal,lw=2)); ax
 ax.set_xlim(0,9.8); ax.set_ylim(.3,2.3); plt.show()
 ```
 
+The window is a token limit, not a summary of what the model used: everything inside it is available in principle, and everything outside it is gone. The rest of the chapter separates that capacity from the cost of filling it and from the evidence that a model actually uses what fits.
+
 ::: {.concept-box .concept-core #concept-context-window data-term="Context window and key-value cache" data-domain="Large language models"}
 **Context window and key-value cache.** The context window is the finite token prefix a model can condition on in one request. A key-value cache stores prior attention states during decoding to avoid recomputation, while consuming memory that grows with active context.
 :::
@@ -57,9 +47,9 @@ ax.set_xlim(0,9.8); ax.set_ylim(.3,2.3); plt.show()
 
 ### A context window is an information boundary
 
-The context window is a token limit, not a guarantee that every retained token affects an answer. A token outside the window cannot be attended to by an ordinary finite-context decoder. A token inside it is available in principle, but the model may assign it little attention, fail to retrieve it among distractors, or use it incorrectly. “Supports 32,000 tokens” therefore describes an input capacity, not a measured ability to answer questions about every position in a 32,000-token document.
+The context window is a token limit, not a guarantee that every retained token affects an answer. A token outside the window cannot be attended to by an ordinary finite-context decoder. A token inside it is available in principle, but the model may assign it little attention, fail to retrieve it among distractors, or use it incorrectly. â€œSupports 32,000 tokensâ€ therefore describes an input capacity, not a measured ability to answer questions about every position in a 32,000-token document.
 
-The boundary is measured after tokenisation. A page, a word count, or a character count has no fixed conversion because language, formatting, code, and tokeniser affect the number of IDs. Prompts also consume the same budget as generated output in most interfaces. A requested answer can fail because the prompt plus reserved output exceeds the configured total length.
+The boundary is measured after tokenisation. A page, a word count, or a character count has no fixed conversion because language, formatting, code, and tokenizer affect the number of IDs. Prompts also consume the same budget as generated output in most interfaces. A requested answer can fail because the prompt plus reserved output exceeds the configured total length.
 
 ```{python}
 #| label: fig-length-budget
@@ -71,7 +61,7 @@ fig,ax=plt.subplots(figsize=(8,2.7)); ax.barh([0],[prompt],color=blue,label="pro
 
 ### Prompt processing and generation are different phases
 
-During prompt processing, a causal Transformer can compute representations for supplied positions in parallel under its causal mask. This is commonly called prefill. Once generation begins, token \(t+1\) cannot be selected until the model has processed the selected token \(t\). Output is therefore sequential even on highly parallel hardware.
+During prompt processing, a causal Transformer can compute representations for supplied positions in parallel under its causal mask. This is commonly called prefill. Once generation begins, token $t+1$ cannot be selected until the model has processed the selected token $t$. Output is therefore sequential even on highly parallel hardware.
 
 The difference helps interpret latency. A long prompt can create a substantial initial wait before the first new token. A long generated answer can be slow because it requires repeated decode steps. Reporting only total tokens per second mixes these phases and obscures the user-facing bottleneck.
 
@@ -82,11 +72,13 @@ for chosen in [17,29,3]:
     generated.append(chosen)
 ```
 
-## Level 2 - Cache mechanics
+Level 1 identified the window as an information boundary and the two phases of a request. Level 2 follows the cache that makes sequential generation affordable: why naive decoding repeats work, what the cache stores, and how its correctness is tested.
+
+## Level 2 - Mechanics
 
 ### Why naive decoding repeats work
 
-Without a cache, generating each new token recomputes attention projections for the full prefix. For a prefix length \(L\), the next step uses length \(L+1\), then \(L+2\), and so on. Earlier tokens are repeatedly projected even though their keys and values do not change in a causal decoder.
+Without a cache, generating each new token recomputes attention projections for the full prefix. For a prefix length $L$, the next step uses length $L+1$, then $L+2$, and so on. Earlier tokens are repeatedly projected even though their keys and values do not change in a causal decoder.
 
 A key-value cache stores the key and value tensors produced at each layer for earlier positions. At the next step, the new query attends to stored keys and values plus the new token's key and value. The cache does not make generation parallel, but it avoids repeatedly rebuilding the earlier prefix.
 
@@ -106,13 +98,13 @@ ax.set_xlim(0,9.5); ax.set_ylim(.1,3.35); plt.show()
 
 ### Cache shape and memory
 
-For batch size \(B\), layers \(n_l\), key-value heads \(n_{kv}\), head width \(d_h\), and cached length \(L\), keys and values require approximately
+For batch size $B$, layers $n_l$, key-value heads $n_{kv}$, head width $d_h$, and cached length $L$, keys and values require approximately
 
-\[
+$$
 2B n_l n_{kv} L d_h
-\]
+$$
 
-stored numbers. Multiply by bytes per number to obtain a rough memory estimate. Multi-query and grouped-query attention reduce \(n_{kv}\) relative to the number of query heads, lowering cache memory without changing the causal sequence rule.
+stored numbers. Multiply by bytes per number to obtain a rough memory estimate. Multi-query and grouped-query attention reduce $n_{kv}$ relative to the number of query heads, lowering cache memory without changing the causal sequence rule.
 
 ```{python}
 B,layers,kv_heads,length,head_dim,bytes_per=1,32,8,8192,128,2
@@ -133,7 +125,9 @@ assert np.allclose(full_prefix_logits,cached_logits,atol=1e-6)
 print("cached and full-prefix reference outputs agree")
 ```
 
-## Level 3 - Long-context use
+Level 2 specified what the cache stores and how its correctness is tested. Level 3 states the cost relations formally: what prefill costs before any cache exists, and how retrieval differs from a longer window.
+
+## Level 3 - Mathematics & Code
 
 ### Cost grows before the cache is available
 
@@ -159,6 +153,10 @@ print("full document fits window:",document_tokens<=window)
 print("retrieved subset fits window:",retrieved_tokens<=window)
 ```
 
+Level 3 stated the prefill cost relation and the retrieval distinction. Level 4 examines the operational evidence: context extension, serving constraints, failure traces, and the records that make length and latency claims interpretable.
+
+## Level 4 - Research & Systems
+
 ### Context extension needs an explicit comparison
 
 A model may be trained at one maximum length and served at another. Position representations, training examples, attention kernels, and optimisation all affect whether behaviour transfers beyond the length distribution seen during training. A larger configured limit therefore requires a comparison with a stated baseline: the same task at the original and extended lengths, evidence placed across positions, and a record of any change to position handling or continued training.
@@ -179,7 +177,7 @@ for ax,end in zip(axes,[5,7,9]):
 plt.tight_layout(); plt.show()
 ```
 
-The policy should distinguish discarded context from an intentional summary or retrieved representation. A summary is new model-generated text that may omit or distort facts. Retrieval is selected external evidence. Cached tokens are exact retained activations for previous IDs. These mechanisms can be combined, but their information properties differ and they should not be described by one generic claim of “memory”.
+The policy should distinguish discarded context from an intentional summary or retrieved representation. A summary is new model-generated text that may omit or distort facts. Retrieval is selected external evidence. Cached tokens are exact retained activations for previous IDs. These mechanisms can be combined, but their information properties differ and they should not be described by one generic claim of â€œmemoryâ€.
 
 ### Serving constraints change the available context per request
 
@@ -205,13 +203,11 @@ print(trace)
 
 Position and distraction controls should vary one feature at a time. For example, hold the question and answer constant while moving evidence from early to middle and late positions; then add unrelated material while keeping the evidence position fixed. These comparisons reveal whether a score changes with length, location, or competing content. They provide stronger evidence than a single long document with a single successful answer.
 
-## Level 4 - Audit and reporting
-
 ### Length claims need tests that control position and distraction
 
 A useful long-context evaluation places known evidence at several positions, asks a defined question, and compares performance across lengths and numbers of distractors. It should distinguish exact retrieval of a stated item from multi-step use of several items. Repeating a short fact many times, testing only the beginning of a prompt, or scoring a single favourable example cannot establish broad long-context use.
 
-The evaluation should also record tokeniser, actual valid lengths, truncation and packing policy, prompt template, generation limit, sampling rule, and whether the answer was checked automatically or by people. Changing any of these can change the test. An answer that fails may reflect missing evidence, truncation, retrieval failure, cache error, decoding variation, or the model's conditional distribution; the trace should make those possibilities distinguishable.
+The evaluation should also record tokenizer, actual valid lengths, truncation and packing policy, prompt template, generation limit, sampling rule, and whether the answer was checked automatically or by people. Changing any of these can change the test. An answer that fails may reflect missing evidence, truncation, retrieval failure, cache error, decoding variation, or the model's conditional distribution; the trace should make those possibilities distinguishable.
 
 ```{python}
 positions=[128,1024,4096,7168]
@@ -223,7 +219,7 @@ print("record evidence position and outcome:",results)
 
 An inference report should include model and tokenizer version, context limit, maximum output length, prompt and output token distributions, prefill latency, decode latency or tokens per second, cache precision and layout, batch policy, hardware, concurrency, truncation behaviour, and failure policy. At least one cache-equivalence test and one boundary test at the configured maximum length should be retained.
 
-The record supports operational decisions. It can show whether a system is limited by long-prompt prefill, by per-token decode latency, by memory available for concurrent caches, or by a context policy that discards needed evidence. A model card that says only “long context” cannot answer those questions.
+The record supports operational decisions. It can show whether a system is limited by long-prompt prefill, by per-token decode latency, by memory available for concurrent caches, or by a context policy that discards needed evidence. A model card that says only â€œlong contextâ€ cannot answer those questions.
 
 ```{python}
 inference_record={"context_limit":8192,"prompt_tokens":6200,"max_new_tokens":512,"prefill_ms":740,"decode_tokens_per_second":55,"cache_dtype":"float16"}

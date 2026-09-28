@@ -3,30 +3,17 @@ title: "Tokens and Tokenisation"
 subtitle: "Turning text into the discrete identifiers a model can process"
 ---
 
-## Chapter orientation
+## The problem
 
-### Why this chapter matters
+Chapter 23 compared Transformer families as arrangements of information flow, but every one of them consumes the same kind of input: a sequence of discrete identifiers drawn from a fixed vocabulary. Raw text is not that. A Transformer processes tensors, not character strings, and before any embedding lookup something must decide which pieces of text count as units and which integers represent them.
 
-Transformer models process tensors, not raw character strings. Before an embedding lookup, a tokenisation procedure converts text into a sequence of discrete token identifiers under a fixed vocabulary and set of text-processing conventions. The procedure affects which distinctions the model can represent directly, the sequence length it receives, the cost of attention, and the compatibility of training, evaluation, and inference inputs.
+That decision is tokenisation, and it is part of the model rather than a harmless pre-processing detail. It determines which distinctions the model can represent directly, the sequence length it receives, the cost of attention, and whether training, evaluation, and inference inputs are compatible with one another. This chapter defines the text-to-ID contract, compares word, character, byte, and subword units, and explains how vocabulary and normalisation choices affect coverage and cost. It does not yet define the probability distribution or training loss over the resulting IDs; Chapter 25 does that.
 
-Tokenisation is therefore part of the model, not a harmless pre-processing detail. This chapter defines the text-to-ID contract, compares word, character, byte, and subword units, and explains how vocabulary and normalisation choices affect coverage and cost. It does not yet define the probability distribution or training loss over the resulting IDs; Chapter 25 does that.
+### A repeated word makes segmentation visible
 
-### Learning objectives
+The running text is `replaying replay`. The repeated form makes it possible to compare a word-level representation, a character sequence, and a subword segmentation without implying that any one segmentation is intrinsically correct.
 
-By the end of this chapter, you should be able to:
-
-- distinguish text, tokens, token strings, token IDs, and embedding vectors;
-- explain why an identifier has no numerical meaning before embedding lookup;
-- describe word, character, byte, and subword tokenisation trade-offs;
-- explain the basic logic of byte-pair encoding and vocabulary-limited segmentation;
-- identify special tokens, padding, truncation, and normalisation as interface choices;
-- implement and test a small vocabulary encoder and decoder;
-- estimate how tokenisation changes sequence length and dense-attention cost; and
-- specify the tokeniser metadata required to reproduce a trained model's input interface.
-
-### Running text
-
-The running text is `replaying replay`. The repeated form makes it possible to compare a word-level representation, character sequence, and a subword segmentation without implying that any one segmentation is intrinsically correct.
+The first diagram follows the whole interface from left to right: raw text becomes token strings, token strings become integer IDs, and IDs select embedding rows. Notice where meaning does and does not enter — the IDs are addresses into a fixed vocabulary, and their magnitudes are not semantic quantities.
 
 ```{python}
 #| label: fig-text-to-ids
@@ -47,6 +34,8 @@ ax.text(5.45,.48,"The IDs index a fixed vocabulary; their magnitude is not a sem
 ax.set_xlim(0,11); ax.set_ylim(.2,2.25); plt.show()
 ```
 
+The right-hand stage belongs to Chapter 17: each ID selects one row of an embedding table. The tokenisation decision is everything to its left — which strings exist as units, how many of them a text needs, and which distinctions survive the conversion.
+
 ::: {.concept-box .concept-core #concept-tokenisation data-term="Token and tokenisation" data-domain="Large language models"}
 **Token and tokenisation.** A token is a discrete identifier from a model vocabulary. Tokenisation maps text into such identifiers and back again. It changes sequence length, loss units, and which distinctions a language model can directly represent.
 :::
@@ -55,7 +44,7 @@ ax.set_xlim(0,11); ax.set_ylim(.2,2.25); plt.show()
 
 ### Text must cross a discrete interface
 
-The string `replaying replay` is a sequence of characters visible to a reader. A model needs a finite set of discrete symbols that can index rows in an embedding table. A tokeniser chooses a segmentation, assigns each chosen token a vocabulary ID, and records conventions for spaces, punctuation, Unicode, and special markers. The embedding layer in Chapter 17 then replaces each ID with a learned vector.
+The string `replaying replay` is a sequence of characters visible to a reader. A model needs a finite set of discrete symbols that can index rows in an embedding table. A tokenizer chooses a segmentation, assigns each chosen token a vocabulary ID, and records conventions for spaces, punctuation, Unicode, and special markers. The embedding layer in Chapter 17 then replaces each ID with a learned vector.
 
 An ID is an address, not an ordered quantity. ID 27 is not twice as meaningful as ID 14, and neighbouring IDs do not imply similar tokens. Permuting the rows of an embedding table and applying the same permutation to token IDs leaves the model function unchanged. Meaning is learned in the embedding vectors and later transformations, not in the integers used to retrieve them.
 
@@ -90,8 +79,8 @@ The relevant comparison is not simply “fewer tokens is better”. Coverage, la
 
 ```{python}
 #| label: fig-vocabulary-length-tradeoff
-#| fig-cap: "Vocabulary choices exchange embedding-table size against the average number of tokens needed to represent text; neither axis alone identifies the best tokeniser."
-#| fig-alt: "A conceptual scatter plot places word, subword, character, and byte tokenisers at different combinations of vocabulary size and average sequence length."
+#| fig-cap: "Vocabulary choices exchange embedding-table size against the average number of tokens needed to represent text; neither axis alone identifies the best tokenizer."
+#| fig-alt: "A conceptual scatter plot places word, subword, character, and byte tokenizers at different combinations of vocabulary size and average sequence length."
 names=["word","subword","character","byte"]
 vocab_sizes=np.array([50000,32000,150,256]); average_lengths=np.array([9,12,45,52])
 fig,ax=plt.subplots(figsize=(7.8,4.3))
@@ -147,7 +136,7 @@ The mask uses `True` for valid positions in this example. Frameworks vary in whe
 
 Byte-pair encoding (BPE) begins from small units and repeatedly merges frequent adjacent pairs in a training corpus. The learned merge list defines a vocabulary and a segmentation procedure. Sennrich, Haddow, and Birch used subword units based on BPE to address rare and unknown words in neural machine translation [@sennrich2016bpe].
 
-Unigram-style tokenisers begin with a candidate inventory and select segmentations under a probabilistic vocabulary model. SentencePiece provides BPE and unigram approaches trained directly from raw sentences, avoiding a required language-specific pre-tokenisation stage [@kudo2018sentencepiece]. The algorithms differ, but both make the vocabulary and segmentation rules part of the trained model interface.
+Unigram-style tokenizers begin with a candidate inventory and select segmentations under a probabilistic vocabulary model. SentencePiece provides BPE and unigram approaches trained directly from raw sentences, avoiding a required language-specific pre-tokenisation stage [@kudo2018sentencepiece]. The algorithms differ, but both make the vocabulary and segmentation rules part of the trained model interface.
 
 ```{python}
 #| label: fig-bpe-merge
@@ -165,6 +154,8 @@ plt.tight_layout(); plt.show()
 The figure is a toy procedure, not a tokenizer trainer. Real BPE implementations define initial symbols, pre-tokenisation or raw-text handling, merge order, vocabulary limits, special tokens, and byte or Unicode representation. These choices affect which strings can be represented and how many IDs they consume.
 
 Segmentation can also be ambiguous. With pieces `re`, `play`, `ing`, and `replay`, the text `replaying` could be divided as `replay` plus `ing` or as `re` plus `play` plus `ing`. A deterministic BPE implementation resolves the choice using its learned merge order; a unigram formulation can score alternatives. The resulting model sees only the selected sequence unless training deliberately samples alternatives. Tokenisation is therefore a learned or configured view of text, not a transparent transcription.
+
+Level 2 followed the stages of the tokenisation contract and their failure modes. Level 3 states the lookup interface formally, implements a small encoder, and counts what tokenisation costs in tensors and attention relations.
 
 ## Level 3 - Mathematics & Code
 
@@ -232,7 +223,9 @@ fig,ax=plt.subplots(figsize=(8.4,4.1)); ax.plot(lengths,entries,marker="o",color
 ax.set_xscale("log",base=2); ax.set_yscale("log",base=2); ax.set_xlabel("Token sequence length"); ax.set_ylabel("Score entries: B × H × S²"); ax.set_title("Token length changes dense-attention scale"); plt.tight_layout(); plt.show()
 ```
 
-This accounting does not mean that the tokenizer alone determines inference cost. Width, layers, cache policy, batching, kernel choice, and decoding strategy also matter. It identifies why token-count comparisons are meaningful systems measurements and why character counts are not a reliable substitute across tokenisers.
+This accounting does not mean that the tokenizer alone determines inference cost. Width, layers, cache policy, batching, kernel choice, and decoding strategy also matter. It identifies why token-count comparisons are meaningful systems measurements and why character counts are not a reliable substitute across tokenizers.
+
+Level 3 connected IDs to embedding rows and token counts to attention cost. Level 4 examines how vocabularies distribute that cost unevenly across languages and domains, and why the interface must be versioned with the checkpoint.
 
 ## Level 4 - Research & Systems
 
@@ -240,13 +233,13 @@ This accounting does not mean that the tokenizer alone determines inference cost
 
 A vocabulary trained on one corpus or language mix may encode common forms concisely while splitting other forms into long sequences. Names, dialects, spelling variants, scripts, code, URLs, and rare morphological forms can receive disproportionate fragmentation. The resulting length increase affects context allocation, throughput, truncation risk, and the number of learning events associated with a visible string.
 
-No general statement that one tokeniser is fair, multilingual, or robust follows from its unit type alone. Evaluation should report token counts and unknown or fallback rates by relevant language, script, domain, and input class. It should inspect the text transformations applied before segmentation and test whether important distinctions are preserved at the model boundary.
+No general statement that one tokenizer is fair, multilingual, or robust follows from its unit type alone. Evaluation should report token counts and unknown or fallback rates by relevant language, script, domain, and input class. It should inspect the text transformations applied before segmentation and test whether important distinctions are preserved at the model boundary.
 
 ### Training and inference must use the identical interface
 
 A model checkpoint expects the vocabulary ordering, merge rules or unigram model, normalisation policy, added-token map, maximum length, padding side, truncation side, and special-token IDs used during training. Replacing a tokenizer with another that has the same vocabulary size is incompatible: ID 14 may select a different embedding row, and the same text may have different positions and masks.
 
-The tokeniser should therefore be versioned and loaded with the model. An audit should preserve the tokenizer artefact or exact training configuration; vocabulary hash; special-token map; normalisation and pre-tokenisation rules; byte fallback policy; maximum length; truncation and padding policy; source and target tokenisers where relevant; and token-length distributions on train, evaluation, and deployment data.
+The tokenizer should therefore be versioned and loaded with the model. An audit should preserve the tokenizer artefact or exact training configuration; vocabulary hash; special-token map; normalisation and pre-tokenisation rules; byte fallback policy; maximum length; truncation and padding policy; source and target tokenizers where relevant; and token-length distributions on train, evaluation, and deployment data.
 
 The audit should also run round-trip and boundary tests. A reversible input should satisfy an explicitly defined encode-decode comparison. Special tokens should not be inserted or removed unexpectedly. Padding should have no effect on valid-token output. Inputs at the maximum length and one position beyond it should expose the truncation or rejection policy. These tests are small, but they prevent tokenisation mismatches from appearing later as unexplained model failures.
 
@@ -282,7 +275,7 @@ Token-level metrics also need interpretation. A system may have a fixed maximum 
 11. Compare the systems consequences of word and character tokenisation for a long document.
 12. Explain why BPE merge rules must be saved with a model checkpoint.
 13. Design a tokenisation evaluation across two scripts or language varieties.
-14. State the source and target tokeniser metadata an encoder-decoder model requires.
+14. State the source and target tokenizer metadata an encoder-decoder model requires.
 15. Test a tokenizer on unusual whitespace and a long repeated input.
 16. State which chapter introduces the next-token probability objective.
 

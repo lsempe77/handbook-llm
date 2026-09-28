@@ -3,30 +3,17 @@ title: "Positional Information"
 subtitle: "Giving attention a representation of order"
 ---
 
-## Chapter orientation
+## The problem
 
-### Why this chapter matters
+Chapter 20 left self-attention retrieving within one sequence: every position issues a query and collects a weighted mixture from eligible keys and values. That operation has no intrinsic notion of first, next, or last. If the same input vectors are permuted, ordinary self-attention permutes its outputs in the same way. It cannot on its own distinguish `dog bites person` from `person bites dog`.
 
-Self-attention compares representations at different sequence positions, but the operation in Chapter 20 has no intrinsic notion of first, next, or last. If the same input vectors are permuted, ordinary self-attention permutes its outputs in the same way. It cannot on its own distinguish `dog bites person` from `person bites dog`.
+Positional information changes the representations or the attention scores so that location and distance can affect a computation. This chapter compares absolute and relative approaches, derives the original sinusoidal encoding, and explains why position handling becomes a design and evaluation decision at long context lengths. It still does not assemble a complete Transformer: residual paths, normalisation, and feed-forward computation are Chapter 22's responsibility.
 
-Positional information changes the representations or attention scores so that location and distance can affect a computation. This chapter compares absolute and relative approaches, derives the original sinusoidal encoding, and explains why position handling becomes a design and evaluation decision at long context lengths. It does not yet assemble residual paths, normalisation, attention, and feed-forward computation into a Transformer block; Chapter 22 does that.
+### A permuted sequence makes the missing signal visible
 
-### Learning objectives
+The running sequence contains five content vectors. Throughout the chapter those vectors are preserved while only their positional information changes, which separates the question of *what* a token represents from the question of *where it appears*.
 
-By the end of this chapter, you should be able to:
-
-- explain why self-attention without positional information is permutation-equivariant;
-- distinguish a token's content representation from its position representation;
-- construct and interpret sinusoidal positional encodings;
-- distinguish learned absolute, fixed absolute, relative, rotary, and attention-bias approaches;
-- state where a positional method enters a Transformer computation;
-- implement a small positional encoding module and test its shape and order contracts;
-- explain why the training context length does not automatically establish reliable performance beyond that range; and
-- report positional conventions when comparing or deploying models.
-
-### Running sequence
-
-The running sequence contains five content vectors. We will preserve those vectors and change only their positional information. This separates the question of *what* a token represents from the question of *where it appears*.
+The first diagram shows why that separation matters. Two rows pass the same three token vectors through the same attention operation in different orders. Follow the colours: the outputs differ only by the same rearrangement, so nothing inside the operation preferred one order over the other. Every method in this chapter exists to break that symmetry.
 
 ```{python}
 #| label: fig-permutation-problem
@@ -55,6 +42,8 @@ for row,order in enumerate([[0,1,2],[2,0,1]]):
 ax.text(5.9,.25,"The output relation changes only by the same permutation.",ha="center",color=grey)
 ax.set_xlim(0,10.1); ax.set_ylim(0,4); plt.show()
 ```
+
+The two output rows contain the same transformed vectors in rearranged order. The symmetry is exact for this operation, not an approximation: reordering the inputs can only reorder the outputs. Making order matter requires a signal beyond content.
 
 ::: {.concept-box .concept-core #concept-positional-information data-term="Positional information" data-domain="Representations and Transformers"}
 **Positional information.** A representation of order supplied to an architecture whose attention calculation would otherwise be insensitive to sequence permutation. Absolute, relative, and rotary schemes make different assumptions about position and distance.
@@ -249,6 +238,8 @@ print("same relative displacement gives same dot product:",np.allclose(q_at_3@k_
 ```
 
 The test uses pairs with equal relative displacement ($5-3=10-8$). It tests a mathematical property of this small implementation, not a claim that a trained model treats every equal-distance relation alike.
+
+Level 3 verified the permutation symmetry, the positional-module offset contract, and the rotary displacement property in code. Level 4 examines what each position family assumes about lengths beyond training, and what an audit must record before a long-context claim.
 
 ## Level 4 - Research & Systems
 

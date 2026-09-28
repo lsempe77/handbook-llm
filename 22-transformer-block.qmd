@@ -3,30 +3,17 @@ title: "The Transformer Block"
 subtitle: "Residual computation around attention and feed-forward transformations"
 ---
 
-## Chapter orientation
+## The problem
 
-### Why this chapter matters
+Chapters 20 and 21 supplied two ingredients: multi-head self-attention, which lets each position retrieve from eligible positions, and positional information, which makes order available to that retrieval. Neither operation is deployed alone. Attention's output would otherwise replace the incoming representation with no direct route left through it, feature scales would drift across many stacked layers, and retrieval by itself performs no per-position nonlinear transformation of the kind earlier networks relied on.
 
-Chapters 20 and 21 defined multi-head self-attention and positional information. Neither operation is usually deployed alone. A Transformer block places attention inside residual paths, normalisation, and a position-wise feed-forward network. Repeating the block produces a sequence of contextual representations at a fixed model width.
+A Transformer block places attention inside residual paths, normalisation, and a position-wise feed-forward network, turning those ingredients into one computational unit that can be repeated. Stacking blocks produces a sequence of contextual representations at a fixed model width. This chapter defines that unit, follows one tensor through it, and distinguishes the original post-normalisation arrangement from the widely used pre-normalisation arrangement. It does not decide which kind of attention the block contains — encoder self-attention, masked decoder self-attention, or cross-attention between sequences; Chapter 23 makes those architectural distinctions.
 
-This chapter defines that computational unit, follows one tensor through it, and distinguishes the original post-normalisation arrangement from the widely used pre-normalisation arrangement. It does not decide whether attention is encoder self-attention, masked decoder self-attention, or cross-attention between sequences. Chapter 23 makes those architectural distinctions.
+### One tensor makes the shape contract visible
 
-### Learning objectives
+The running input has batch size two, sequence length four, and model width six: $X\in\mathbb{R}^{2\times4\times6}$. Every sublayer returns that same shape. Internal widths can change, but residual addition requires the output of each residual branch to return to model width; that constraint is what makes the block repeatable.
 
-By the end of this chapter, you should be able to:
-
-- name the attention, residual, normalisation, and feed-forward components of a Transformer block;
-- state the input and output shape contract of each component;
-- explain why the feed-forward network is applied independently at every position;
-- distinguish residual addition from concatenation;
-- calculate layer normalisation across feature coordinates for one token;
-- write pre-norm and post-norm block equations;
-- implement and test a small causal pre-norm Transformer block; and
-- identify the block-level metadata needed to reproduce a training or inference result.
-
-### Running tensor
-
-The running input has batch size two, sequence length four, and model width six: $X\in\mathbb{R}^{2\times4\times6}$. Every sublayer returns that same shape. Internal widths can change, but residual addition requires the output of each residual branch to return to model width.
+The first diagram shows the whole block as one vertical path. Read it top to bottom: the input is normalised before entering attention, the attention result is added back to the input, and the sum passes through a second normalisation and feed-forward pair with another residual addition. The orange bypass arrows are the residual routes. Notice that they skip the branches, so whatever enters the block can reach the output without passing through a learned transformation.
 
 ```{python}
 #| label: fig-transformer-block-overview
@@ -48,6 +35,8 @@ for start,end,label in [((2.95,6.54),(2.5,3.25),"residual"),((2.95,3.54),(2.5,.4
 for y in [3.25,.47]: ax.add_patch(Rectangle((2.25,y-.2),.52,.4,facecolor=orange,edgecolor="white")); ax.text(2.51,y,"+",ha="center",va="center",color="white",fontsize=13)
 ax.set_xlim(1.1,6.5); ax.set_ylim(-.1,7.1); plt.show()
 ```
+
+The block's output has the same shape as its input, and each position keeps a direct route to its own incoming representation. Those two properties are what allow the unit to be stacked: the output of one block is a valid input to the next.
 
 ::: {.concept-box .concept-core #concept-transformer-block data-term="Transformer block" data-domain="Representations and Transformers"}
 **Transformer block.** A residual computation that combines attention, normalisation, and a position-wise feed-forward network. The block transforms a sequence representation while preserving a direct residual route for each position.
@@ -172,6 +161,8 @@ This small example uses ReLU for visibility. Many modern architectures use varia
 
 The same FFN weights are reused at every position, but the inputs need not be similar. Once attention has mixed contextual information into a representation, the FFN can transform a token differently because its coordinates differ. The phrase *position-wise* describes which axes the FFN mixes directly, not an assertion that the output ignores context.
 
+Level 2 specified the branch order, the normalisation statistics, and the position-wise transformation. Level 3 contrasts pre-norm with post-norm as different functions and implements a causal block with testable contracts.
+
 ## Level 3 - Mathematics & Code
 
 ### Post-norm and pre-norm are different functions
@@ -238,6 +229,8 @@ print("zeroed branches preserve input:",torch.allclose(zero_block(x),x,atol=1e-6
 ```
 
 The first test checks that the complete block preserves the attention mask's causal boundary. The second checks the residual route: when both learned branches are zeroed, the block reduces to the identity map. These tests are more informative than verifying only that tensor shapes match.
+
+Level 3 implemented one block and tested its residual and causal contracts. Level 4 examines what a block and a stack of blocks cost, and what a specification must record before a result can be reproduced or compared.
 
 ## Level 4 - Research & Systems
 

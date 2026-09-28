@@ -3,30 +3,17 @@ title: "Encoders, Decoders, and Encoder-Decoder Models"
 subtitle: "Transformer families defined by information flow"
 ---
 
-## Chapter orientation
+## The problem
 
-### Why this chapter matters
+Chapter 22 defined a Transformer block: attention inside residual paths, normalisation, and a position-wise feed-forward network, preserving sequence length and model width. A block is a computational unit, not a complete model. Nothing in its definition says which positions may see which others, how many sequences exist, or where an output comes from. The same block can be arranged so that every input position sees the whole input, so that each output position sees only an earlier prefix, or so that one sequence is encoded before another sequence retrieves from it.
 
-A Transformer block is a computational unit, not a complete model family. The same block can be arranged so that every input position sees the whole input, so that each output position sees only an earlier prefix, or so that one sequence is encoded before another sequence retrieves from it. These choices define encoder-only, decoder-only, and encoder-decoder models.
+Those arrangements define the encoder-only, decoder-only, and encoder-decoder families, and the distinction follows from information flow rather than from a brand name. It determines the masks, the context available at each representation, the usual output interface, and the work performed during generation. This chapter compares the three configurations with small tensor examples. Tokenisation and the detailed language-model objective are deferred to Chapters 24 and 25.
 
-The distinction follows from information flow rather than from a brand name. It determines the masks, the available context at each representation, the usual output interface, and the work performed during generation. This chapter uses small tensor examples to compare the three configurations. Tokenisation and detailed language-model objectives are deferred to Chapters 24 and 25.
+### Two short sequences make the flow visible
 
-### Learning objectives
+The running example gives a source sequence four representations, $X^{src}\in\mathbb{R}^{B\times4\times D}$, and a target prefix three, $X^{tgt}\in\mathbb{R}^{B\times3\times D}$. An encoder produces four contextual source representations; a decoder produces three target representations, each constrained to its own earlier target positions but able to retrieve from all valid source positions through cross-attention. The unequal lengths matter: they keep the source and target axes visibly distinct throughout the chapter.
 
-By the end of this chapter, you should be able to:
-
-- distinguish encoder-only, decoder-only, and encoder-decoder Transformer configurations;
-- state the self-attention eligibility rule in each component;
-- explain cross-attention as target queries retrieving from encoded source keys and values;
-- identify the source and target axes in a sequence-to-sequence model;
-- describe which outputs can be computed in parallel and which require autoregressive steps;
-- implement and test a small encoder-decoder information-flow skeleton;
-- match a model family to a stated representation, generation, or conditional-generation requirement; and
-- report the architecture and masking choices needed to reproduce a model result.
-
-### Running example
-
-Let a source sequence have four representations, $X^{src}\in\mathbb{R}^{B\times4\times D}$, and a target prefix have three, $X^{tgt}\in\mathbb{R}^{B\times3\times D}$. An encoder produces four contextual source representations. A decoder produces three target representations, each constrained to its own earlier target positions but able to retrieve from all valid source positions through cross-attention.
+The first diagram places the three families side by side. Compare them by their arrows rather than their names: the left panel lets every input position exchange information with every other, the middle panel lets each position see only earlier positions, and the right panel separates a source stack from a target stack joined by cross-attention. The same block from Chapter 22 sits inside each stack.
 
 ```{python}
 #| label: fig-model-families
@@ -58,6 +45,8 @@ axes[2].add_patch(FancyArrowPatch((1.0,1.86),(2.9,1.86),arrowstyle="-|>",mutatio
 for ax in axes: ax.set_xlim(0,4.1); ax.set_ylim(.1,2.65)
 plt.tight_layout(); plt.show()
 ```
+
+The three panels differ only in which sequences exist and which attention paths connect them. Everything else — the residual routes, normalisation, and feed-forward branches — is the block already defined. The rest of the chapter makes each eligibility rule explicit.
 
 ::: {.concept-box .concept-core #concept-transformer-family data-term="Encoder, decoder, and encoder-decoder model" data-domain="Representations and Transformers"}
 **Encoder, decoder, and encoder-decoder model.** An encoder represents an available input with bidirectional access. A decoder generates causally from a prefix. An encoder-decoder model represents a source then generates a target through cross-attention.
@@ -229,6 +218,8 @@ The two tests express different contracts. Causal target self-attention prevents
 
 The tests use random untrained parameters, so the magnitude or direction of the source effect has no semantic interpretation. Their purpose is architectural: a permitted input path exists, and a prohibited future-target path does not. A trained system requires additional tests for output-head alignment, tokenizer boundaries, and the evaluation data pipeline.
 
+Level 3 stated the conditional factorisations and tested both mask contracts with perturbations. Level 4 examines how the choice of family shapes serving cost, evaluation validity, and the specification a reported result requires.
+
 ## Level 4 - Research & Systems
 
 ### Architecture choice depends on the output contract
@@ -237,7 +228,7 @@ Encoder-only models are appropriate when the output is a representation or a pre
 
 The choice affects serving as well as modelling. An encoder-only retrieval or classification service can batch complete inputs and return outputs after a forward pass. A decoder-only service maintains a growing prefix and usually schedules sequential token steps across active requests. An encoder-decoder service has a source-encoding stage followed by target decoding, with source memory retained for the request. The appropriate design depends on the output contract, expected source and target lengths, latency requirements, and the available supervision.
 
-BERT exemplifies bidirectional encoder representations [@devlin2019bert]. T5 uses an encoder-decoder text-to-text framework [@raffel2020t5], and BART pre-trains a sequence-to-sequence architecture through denoising [@lewis2020bart]. The examples establish that the families are used in practice; they do not imply that pretraining objective, data, scale, or evaluation can be inferred from the architecture alone.
+BERT exemplifies bidirectional encoder representations [@devlin2019bert]. T5 uses an encoder-decoder text-to-text framework [@raffel2020t5], and BART pretrains a sequence-to-sequence architecture through denoising [@lewis2020bart]. The examples establish that the families are used in practice; they do not imply that pretraining objective, data, scale, or evaluation can be inferred from the architecture alone.
 
 ```{python}
 #| label: fig-generation-work

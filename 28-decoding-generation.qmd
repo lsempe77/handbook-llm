@@ -3,28 +3,17 @@ title: "Decoding and Generation"
 subtitle: "Turning next-token distributions into sequences under explicit policies"
 ---
 
-## Chapter orientation
+## The problem
 
-### Why this chapter matters
+Chapter 27 showed a request unfolding inside a finite window: prefill processes the prompt, then each decode step extends it by one token. At every one of those steps the model does not emit a token — it emits a probability distribution over the whole vocabulary. A generated response requires an additional policy that selects or samples from that distribution, repeats the process, and decides when to stop.
 
-Chapter 25 defined a language model's next-token probability distribution. A generated response requires an additional policy that selects or samples from that distribution, repeats the process, and decides when to stop. Greedy decoding, temperature, top-k sampling, nucleus sampling, repetition controls, and output constraints can produce different text from the same model and prompt.
+That policy is decoding, and it is part of the deployed system. Greedy decoding, temperature, top-k sampling, nucleus sampling, repetition controls, and output constraints can produce different text from the same model and prompt. Decoding changes reproducibility, diversity, latency, output length, and the types of errors a user sees. It does not repair missing evidence, change the model's training data, or establish truth. This chapter defines the common policies and their evaluation.
 
-Decoding is therefore part of the deployed system. It changes reproducibility, diversity, latency, output length, and the types of errors a user sees. It does not repair missing evidence, change the model's training data, or establish truth. This chapter defines the common policies and their evaluation.
+### A fixed distribution isolates the decision
 
-### Learning objectives
+The running example fixes one prefix's next-token distribution: probabilities for `the`, `a`, `cat`, `slept`, and `<eos>`. The model distribution stays constant through the first examples, so every difference in output traces to the selection rule alone.
 
-By the end of this chapter, you should be able to:
-
-- distinguish a probability distribution from a decoding policy and a generated sequence;
-- implement greedy, temperature, top-k, and top-p selection on a toy distribution;
-- explain why sampling is stochastic and how seeds affect reproducibility;
-- identify stopping, length, repetition, and constraint policies as generation choices;
-- evaluate decoding settings against a stated task rather than a generic quality claim; and
-- record the configuration needed to reproduce a generation.
-
-### Running distribution
-
-For one prefix, suppose a vocabulary has probabilities for `the`, `a`, `cat`, `slept`, and `<eos>`. The model distribution is fixed in the first examples; only the selection rule changes.
+The first diagram shows the separation this chapter maintains. On the left, the bar chart is the model's distribution over the five tokens; on the right, a decision box emits one selected token. Notice the arrow between them: the distribution does not determine that arrow. A declared rule — greedy, temperature, sampling, constraints — does.
 
 ```{python}
 #| label: fig-distribution-decision
@@ -40,6 +29,8 @@ probs=np.array([.42,.25,.17,.10,.06])
 fig,ax=plt.subplots(figsize=(9,3.7)); ax.bar(tokens,probs,color=blue); ax.set_ylim(0,.5); ax.set_ylabel("next-token probability")
 ax.add_patch(FancyArrowPatch((4.2,.3),(5.45,.3),arrowstyle="-|>",color=orange,mutation_scale=14)); ax.add_patch(Rectangle((5.6,.12),1.3,.36,facecolor=teal,edgecolor="white")); ax.text(6.25,.3,"decoder",ha="center",va="center",color="white"); ax.text(7.55,.3,"selected\ntoken",ha="center",va="center",color=purple); ax.set_title("Distribution and decision are separate objects"); plt.tight_layout(); plt.show()
 ```
+
+Two systems with identical distributions can emit different text under different rules, and one sampling rule can emit different text across runs. Attributing any observed difference requires knowing the rule, which is why decoding configuration belongs in every reproducible record.
 
 ::: {.concept-box .concept-core #concept-decoding data-term="Decoding" data-domain="Large language models"}
 **Decoding.** The policy that turns a model's next-token distribution into an output sequence. Temperature, truncation, sampling, and stopping rules change the distribution of produced responses without changing the trained parameters.
@@ -73,11 +64,13 @@ for step,token in enumerate(generated,1):
         print("stop on end token"); break
 ```
 
-## Level 2 - Distribution transformations
+Level 1 separated the model's options from the decoder's choice, including the choice to stop. Level 2 makes the single-step transformations explicit: how temperature, top-k, and top-p reshape the distribution before a token is drawn.
+
+## Level 2 - Mechanics
 
 ### Temperature changes relative concentration
 
-Temperature divides logits before softmax. For logits \(z\) and temperature \(\tau>0\), the transformed distribution is \(\operatorname{softmax}(z/\tau)\). Values below one sharpen differences between logits; values above one flatten the distribution. Temperature does not add information or identify an appropriate answer. It changes how sharply the decoder follows the model's existing ranking.
+Temperature divides logits before softmax. For logits $z$ and temperature $\tau>0$, the transformed distribution is $\operatorname{softmax}(z/\tau)$. Values below one sharpen differences between logits; values above one flatten the distribution. Temperature does not add information or identify an appropriate answer. It changes how sharply the decoder follows the model's existing ranking.
 
 ```{python}
 logits=np.log(probs)
@@ -100,7 +93,7 @@ Very low temperature approaches greedy selection but remains a distribution. Ver
 
 ### Top-k and top-p restrict the candidate set
 
-Top-k keeps the \(k\) highest-probability entries, sets the rest to zero, and renormalises. Nucleus or top-p sampling keeps the smallest high-probability set whose cumulative mass reaches a threshold \(p\), then renormalises. Top-k has a fixed candidate count; top-p adapts its count to the distribution's concentration [@holtzman2020curious].
+Top-k keeps the $k$ highest-probability entries, sets the rest to zero, and renormalises. Nucleus or top-p sampling keeps the smallest high-probability set whose cumulative mass reaches a threshold $p$, then renormalises. Top-k has a fixed candidate count; top-p adapts its count to the distribution's concentration [@holtzman2020curious].
 
 ```{python}
 def top_k_distribution(p,k):
@@ -123,7 +116,11 @@ order=np.argsort(probs)[::-1]; ranked=probs[order]
 fig,ax=plt.subplots(figsize=(8,4)); ax.bar(np.arange(len(tokens)),ranked,color=[teal,teal,teal,grey,grey]); ax.plot(np.arange(len(tokens)),np.cumsum(ranked),color=orange,marker="o",label="cumulative mass"); ax.axhline(.8,color=purple,ls="--",label="top-p threshold"); ax.set_xticks(np.arange(len(tokens)),tokens[order]); ax.set_ylabel("probability / cumulative mass"); ax.legend(); ax.set_title("Candidate restrictions depend on distribution rank"); plt.tight_layout(); plt.show()
 ```
 
-## Level 3 - Sequence controls
+The two policies restrict the same ranked distribution differently: top-k keeps a fixed count regardless of how the mass is spread, while top-p keeps as many tokens as the threshold requires. A peaked distribution gives top-p few candidates; a flat one gives it many.
+
+Level 2 reshaped the distribution for a single decision. Level 3 assembles decisions into sequence-level controls: repetition penalties, hard constraints, beam search, and length policies.
+
+## Level 3 - Mathematics & Code
 
 ### Repetition controls change the sequence distribution
 
@@ -173,6 +170,12 @@ raw_scores=np.array([-2.0,-2.7]); normalised=np.array([-1.0,-.9]); x=np.arange(2
 fig,ax=plt.subplots(figsize=(7,3.8)); ax.bar(x-w/2,raw_scores,w,label="raw log score",color=blue); ax.bar(x+w/2,normalised,w,label="illustrative length-normalised score",color=teal); ax.set_xticks(x,labels); ax.axhline(0,color=grey,lw=.7); ax.legend(); ax.set_title("Ranking depends on an explicit length policy"); plt.tight_layout(); plt.show()
 ```
 
+The raw accumulated score favours the short candidate; the normalised score reverses that ranking. Neither ranking is intrinsic to the model: each follows from a policy that must be declared.
+
+Level 3 implemented the single-step and sequence-level controls. Level 4 examines how they are evaluated against a stated task: diversity, cross-step interaction, error consequence, and the records that make a generation reproducible.
+
+## Level 4 - Research & Systems
+
 ### Output diversity is not an unconditional good
 
 Sampling several continuations can be useful when a task permits alternatives, such as brainstorming, creative writing, or producing candidate solutions for a later verifier. Diversity can be harmful when an answer must be stable, precisely formatted, or grounded in a supplied record. Increasing temperature or candidate support changes the distribution of output strings; it does not distinguish useful variation from unsupported variation.
@@ -202,8 +205,6 @@ This is also why output quality and model probability should not be conflated. A
 tasks={"extraction":{"temperature":0,"validator":"schema and source match"},"drafting":{"temperature":.8,"validator":"human selection"},"calculation":{"temperature":0,"validator":"exact check"}}
 for task,policy in tasks.items(): print(task,policy)
 ```
-
-## Level 4 - Auditing generation
 
 ### A decoding evaluation varies policies deliberately
 
