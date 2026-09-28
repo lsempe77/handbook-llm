@@ -3,31 +3,17 @@ title: "Self-attention and Multi-head Attention"
 subtitle: "Letting each position retrieve from other positions"
 ---
 
-## Chapter orientation
+## The problem
 
-### Why this chapter matters
+Chapter 19 built attention as query-dependent retrieval: a decoder query scores source keys, and weighted values return a context. In that setting the query came from one sequence while the keys and values came from another. But the sequence that needs a context is often also the sequence that holds it. A word whose interpretation depends on an earlier qualifier must retrieve from that qualifier, and every position in a sequence can have such dependencies.
 
-Chapter 19 defined attention between a decoder query and a source sequence. Self-attention uses the same operation within one sequence: every position produces a query, key, and value, then retrieves a context from eligible positions in that sequence. It replaces the recurrent requirement to pass information through every intervening state with direct query-key comparisons.
+Self-attention answers this by using the same operation within one sequence: every position produces a query, a key, and a value, then retrieves a context from the eligible positions of that same sequence. Information from position one no longer has to pass through every intervening recurrent state to reach position five; a direct query-key comparison connects the two. One head learns one projected retrieval pattern, and multi-head attention runs several such patterns in parallel and recombines their outputs. This chapter explains those operations and deliberately stops short of a complete Transformer: positional information belongs to Chapter 21, and the residual, normalisation, and feed-forward machinery belongs to Chapter 22.
 
-One self-attention head learns one projected retrieval pattern. Multi-head attention runs several such patterns in parallel and recombines their outputs. This chapter explains those operations. It does not supply positional information or the residual, normalisation, and feed-forward machinery of a complete Transformer block; Chapters 21 and 22 do that.
+### A small constructed sequence makes retrieval visible
 
-### Learning objectives
+The running tensor has one batch item, five positions, and four input features. It is constructed to make position-to-position weights visible; the values are illustrative rather than learned language representations, and the results demonstrate retrieval mechanics.
 
-By the end of this chapter, you should be able to:
-
-- distinguish cross-attention from self-attention;
-- write the shapes of projected queries, keys, values, scores, weights, and outputs;
-- derive scaled dot-product self-attention;
-- explain why causal masking enforces an autoregressive information boundary;
-- explain what self-attention does and does not know about order without positional information;
-- describe multi-head attention as parallel learned projection-and-retrieval paths;
-- implement and test a masked multi-head attention module;
-- account for its quadratic score matrix and key-value cache implications;
-- avoid treating heads or attention maps as self-explanatory explanations.
-
-### Running sequence
-
-The running tensor has one batch item, five positions, and four input features. It is constructed to make position-to-position weights visible. The values are illustrative rather than learned language representations.
+The first diagram shows one position retrieving from the rest of the sequence. Each position supplies a query, key, and value; the highlighted query at position four is scored against the eligible positions, and weighted values flow into its context. Notice that position five is absent from that mixture: the example applies a causal mask, so a position may retrieve only from itself and earlier positions.
 
 ```{python}
 #| label: fig-self-attention-overview
@@ -38,7 +24,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle, FancyArrowPatch
 
 plt.style.use("seaborn-v0_8-whitegrid")
-blue, teal, orange, purple, grey = "#24527a", "#3a9188", "#d97745", "#5f6b76"
+blue, teal, orange, purple, grey = "#24527a", "#3a9188", "#d97745", "#7a5195", "#5f6b76"
 fig,ax=plt.subplots(figsize=(11,4.5)); ax.axis("off")
 for i in range(5):
     x=.5+i*1.65; colour=orange if i==3 else blue
@@ -50,6 +36,8 @@ for i in range(4): ax.add_patch(FancyArrowPatch((1.05+i*1.65,1.05),(5.0,.66),arr
 ax.text(5.5,3.65,"Causal example: position 4 cannot retrieve position 5",ha="center",fontsize=11)
 ax.set_xlim(0,9); ax.set_ylim(0,4.1); plt.show()
 ```
+
+The context at position four is a mixture of eligible values, not a copy of any single one. A different position forms a different query and therefore retrieves a different mixture from the same sequence, exactly as different decoder queries did in Chapter 19.
 
 ::: {.concept-box .concept-core #concept-self-attention data-term="Self-attention and multi-head attention" data-domain="Representations and Transformers"}
 **Self-attention and multi-head attention.** Self-attention lets each position retrieve from eligible positions in the same sequence. Multi-head attention performs several learned retrievals in parallel. A mask defines which positions are eligible.
@@ -185,6 +173,8 @@ Splitting width does not allocate different token positions to each head. Every 
 
 For example, with $D=512$ and $H=8$, a conventional implementation uses $d_h=64$. Each head still produces a score for every allowed query-key pair; it has fewer coordinates in which to construct that score. The concatenated head outputs recover width 512 before the output projection. Other designs use unequal widths or grouped key/value projections, but the shape contract must be made explicit rather than inferred from the word "head".
 
+Level 2 followed the projections, scores, and masks of one head. Level 3 expresses the batched multi-head computation in tensor form and tests the information boundary of an implementation.
+
 ## Level 3 - Mathematics & Code
 
 ### Batched multi-head shapes make the contracts explicit
@@ -253,6 +243,8 @@ print("earlier outputs unchanged:",torch.allclose(out_base[:,:4],out_changed[:,:
 ```
 
 The perturbation test checks a causal promise: changing a future input cannot alter earlier outputs. It is stronger than inspecting a triangular plot because it tests the complete implemented path.
+
+Level 3 established self-attention as a testable batched module. Level 4 examines what the all-pairs access pattern costs, how head patterns may and may not be interpreted, and how inference avoids repeated projection work.
 
 ## Level 4 - Research & Systems
 

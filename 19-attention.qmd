@@ -3,33 +3,17 @@ title: "Attention"
 subtitle: "Query-dependent weighted retrieval from a sequence of representations"
 ---
 
-## Chapter orientation
+## The problem
 
-### Why this chapter matters
+Chapter 18 ended with a constraint: an encoder-decoder model must compress every relevant source detail into one fixed-width final state, and every decoder decision must rely on that same compressed summary. Different output decisions often need different parts of the source. What is missing is an operation that lets each decoder step access a different portion of the source representations on demand.
 
-Chapter 18 showed the limitation of representing an entire source sequence with one final recurrent state. Different output decisions often need different parts of the source. Attention replaces that fixed access pattern with a query-dependent retrieval operation: score each available source representation, normalise the scores, and return a weighted combination of source values.
+Attention is that operation, and it is a retrieval. The decoder states what it is currently looking for; each source representation is scored against that request; the scores are normalised into weights; and a weighted combination of source values is returned. Because the request changes at each decoding step, the returned combination changes with it, and the source states remain individually accessible instead of being read only through one fixed vector. The same retrieval pattern applies well beyond translation — to image regions, memory slots, database records, or previous model states. This chapter develops it in the encoder-decoder setting because the query, the source positions, and the resulting context vector can be inspected separately; Chapter 20 applies the same ingredients when the sequence queries itself.
 
-Attention is used well beyond translation. The same operation can retrieve from text, image regions, memory slots, database records, or previous model states. This chapter introduces the operation in an encoder-decoder setting because source positions, a decoder query, and a resulting context vector can be inspected separately. Chapter 20 applies the same ingredients when the sequence queries itself.
+### A small constructed source makes retrieval visible
 
-### Learning objectives
+The running example contains five encoder states, each with three value coordinates. A decoder state produces a query. Attention scores each encoder state against that query, converts the scores into weights, and returns a context vector. The values are constructed for explanation; they are not learned semantic vectors, and the results illustrate retrieval mechanics rather than evidence about translation quality.
 
-By the end of this chapter, you should be able to:
-
-- distinguish queries, keys, values, scores, weights, and context vectors;
-- describe attention as query-dependent weighted retrieval;
-- calculate dot-product, bilinear, and additive alignment scores;
-- apply softmax to scores and explain how its normalisation affects gradients and competition;
-- construct a masked attention distribution for variable-length or causal data;
-- calculate a weighted value sum and identify its shape;
-- explain how changing the query changes which source information is retrieved;
-- distinguish global, local, causal, and cross-attention access patterns;
-- explain why attention weights are not automatically causal explanations;
-- identify numerical, memory, and latency costs in an attention implementation;
-- specify the masks, score functions, normalisation rules, and provenance needed to audit an attention mechanism.
-
-### Running example
-
-The running example contains five encoder states, each with three value coordinates. A decoder state produces a query. Attention scores each encoder state against that query, converts the scores into weights, and returns a context vector. The values are constructed for explanation; they are not learned semantic vectors.
+The first diagram follows one query through the whole operation. Read it left to right: each source supplies a key and a value, the query is scored against every key, softmax turns the scores into weights, and the weights mix the values into one context vector. Notice that every source position reaches the context; what differs is how much each contributes.
 
 ```{python}
 #| label: fig-attention-overview
@@ -40,7 +24,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle, FancyArrowPatch
 
 plt.style.use("seaborn-v0_8-whitegrid")
-blue, teal, orange, purple, grey = "#24527a", "#3a9188", "#d97745", "#5f6b76"
+blue, teal, orange, purple, grey = "#24527a", "#3a9188", "#d97745", "#7a5195", "#5f6b76"
 
 fig,ax=plt.subplots(figsize=(12,4.7)); ax.axis("off")
 for i in range(5):

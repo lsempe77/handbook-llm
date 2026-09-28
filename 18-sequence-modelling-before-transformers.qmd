@@ -3,33 +3,17 @@ title: "Sequence Modelling Before Transformers"
 subtitle: "Order, recurrent state, and the fixed-memory bottleneck"
 ---
 
-## Chapter orientation
+## The problem
 
-### Why this chapter matters
+Chapter 17 gave each discrete item a learned vector, and Chapter 16 showed how such vectors sit along a sequence axis. Nothing so far represents order. A reduction that sums or averages the position vectors returns the same summary for `red then blue` and for `blue then red`, yet many tasks depend on which item came first and on which earlier information is still available when a later item is processed.
 
-Embeddings represent items at individual positions. A sequence model must also represent order and decide which earlier information remains available when a later item is processed. A bag of embeddings cannot distinguish `red then blue` from `blue then red` if it reduces them by an order-insensitive sum or mean.
+A recurrent neural network addresses order by carrying a state from one position to the next: the representation at each position is computed from the current input together with whatever the state retains of earlier positions. That single mechanism raises the questions this chapter answers. What can a fixed-width state hold, and how is it updated? How do gradients reach early positions through a chain of repeated transitions? When may a model use future positions, and when must it not? And what happens when an entire source sequence must pass through one final state before a decoder begins? These limitations explain later design choices: gates that regulate what is retained, bidirectional encoders for tasks that permit future context, and the attention mechanism that Chapter 19 introduces.
 
-Recurrent neural networks address this problem by carrying a state from one position to the next. Their limitations explain several later design choices: gates were introduced to preserve useful information over longer spans, bidirectional encoders use future context when a task permits it, and attention avoids forcing an entire source sequence through one fixed-size vector. This chapter establishes those problems before Chapter 19 introduces the attention mechanism itself.
+### A delayed-copy task makes retention visible
 
-### Learning objectives
+The running task is a constructed delayed-copy problem. The first position contains either $+1$ or $-1$; the remaining positions contain zeros; at the final position the model must return the first signal. The task is deliberately simple: success requires retaining one early value across a growing number of steps, so failures of state and gradient propagation become visible. Results from this task illustrate mechanics; they are not evidence about natural sequence data.
 
-By the end of this chapter, you should be able to:
-
-- explain why order-sensitive tasks require more than pooled embeddings;
-- describe a recurrent state as a learned summary of an ordered prefix;
-- unroll a recurrent network through time and identify the shared parameters;
-- calculate simple recurrent updates and distinguish state from output;
-- derive backpropagation through time as repeated use of the chain rule;
-- explain vanishing and exploding gradients as products of temporal Jacobians;
-- describe the update, reset, forget, input, and output gates at the level needed to diagnose their role;
-- distinguish causal, bidirectional, encoder, and decoder sequence processing;
-- explain why fixed-length sequence summaries become a bottleneck;
-- state which sequence metadata, masks, states, and truncation rules must be recorded;
-- explain why recurrence limits parallel execution across positions.
-
-### Running task
-
-The running task is a constructed delayed-copy problem. The first position contains either $+1$ or $-1$. The remaining positions contain zeros. At the final position, the model must return the first signal. The task is deliberately simple: success requires retaining one early value across a growing number of steps, so failures of state and gradient propagation become visible.
+The first diagram contrasts two ways of handling the same pair of sequences. The left panel pools the position vectors and loses the order; the right panel applies a recurrent update, so the final state can differ between the two orders. Notice that the difference comes from the direction of information flow, not from different inputs.
 
 ```{python}
 #| label: fig-order-sensitive
@@ -40,7 +24,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle, FancyArrowPatch
 
 plt.style.use("seaborn-v0_8-whitegrid")
-blue, teal, orange, purple, grey = "#24527a", "#3a9188", "#d97745", "#5f6b76"
+blue, teal, orange, purple, grey = "#24527a", "#3a9188", "#d97745", "#7a5195", "#5f6b76"
 
 fig,axes=plt.subplots(1,2,figsize=(11,4.2)); axes[0].axis("off"); axes[1].axis("off")
 for row,sequence in enumerate([["red","blue"],["blue","red"]]):
@@ -54,7 +38,6 @@ for row,sequence in enumerate([["red","blue"],["blue","red"]]):
 axes[0].set_xlim(0,6); axes[0].set_ylim(.4,4.1); axes[0].set_title("Pooling removes order")
 for row,sequence in enumerate([["red","blue"],["blue","red"]]):
     y=3.0-row*1.5
-    last_x=.35
     for col,item in enumerate(sequence):
         axes[1].add_patch(Rectangle((.45+col*1.55,y),1.05,.65,facecolor=orange if item=="red" else blue,edgecolor="white"))
         axes[1].text(.975+col*1.55,y+.325,item,ha="center",va="center",color="white")

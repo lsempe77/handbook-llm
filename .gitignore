@@ -2,3 +2,4 @@
 /_book/
 /_freeze/
 *.quarto_ipynb
+.kilo/
