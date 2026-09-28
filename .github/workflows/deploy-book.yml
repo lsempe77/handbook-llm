@@ -60,6 +60,7 @@ jobs:
           fi
 
       - name: Checkout site repository
+        if: ${{ secrets.SITE_REPO_TOKEN != '' }}
         uses: actions/checkout@v4
         with:
           repository: lsempe77/lsempe77.github.io
@@ -68,12 +69,14 @@ jobs:
           path: site
 
       - name: Publish rendered book into site repo
+        if: ${{ secrets.SITE_REPO_TOKEN != '' }}
         run: |
           rm -rf site/public/books/ml
           mkdir -p site/public/books/ml
           cp -r _book/. site/public/books/ml/
 
       - name: Commit and push site update
+        if: ${{ secrets.SITE_REPO_TOKEN != '' }}
         run: |
           cd site
           git config user.name "github-actions[bot]"
@@ -85,3 +88,7 @@ jobs:
             git commit -m "Update ML handbook render from handbook-llm@${GITHUB_SHA::7}"
             git push
           fi
+
+      - name: Skip publish (SITE_REPO_TOKEN not configured)
+        if: ${{ secrets.SITE_REPO_TOKEN == '' }}
+        run: echo "SITE_REPO_TOKEN is not configured; render completed but publish was skipped."
